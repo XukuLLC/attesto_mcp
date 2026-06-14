@@ -6,14 +6,17 @@ if Code.ensure_loaded?(Phoenix.Controller) do
     Routes mounted by `AttestoMCP.Router.attesto_mcp_protected_resource_metadata/2`
     dispatch here. The controller reads the resource path and metadata options
     placed in `conn.private` by the route, builds the document with
-    `AttestoMCP.Metadata.protected_resource/3` (deriving the `resource`
-    identifier and default `authorization_servers` from the live request
-    origin), and renders it as JSON.
+    `AttestoMCP.Metadata.protected_resource/3`, and renders it as JSON. The
+    `resource` identifier and default `authorization_servers` origin come from
+    `AttestoMCP.Metadata.resolve_origin/2`: a `:base_url`/`:origin`/`:issuer`
+    passed to the router macro pins it; otherwise it is the live request origin.
 
-    Because the `resource` identifier is derived from the same request origin
-    that `AttestoMCP.Plug.ProtectResource` uses for its `WWW-Authenticate`
+    Because the `resource` identifier is resolved the same way
+    `AttestoMCP.Plug.ProtectResource` resolves its `WWW-Authenticate`
     `resource_metadata` challenge, the discovered metadata URL and the served
-    `resource` value always match.
+    `resource` value match - provided both call sites receive the same origin
+    (with no pin they both derive from the request; behind a proxy pass the same
+    `:base_url`/`:origin` to the router macro and the plug).
 
     The controller compiles only when Phoenix is available; Plug-only consumers
     do not pull it in.

@@ -6,6 +6,68 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-06-14
+
+### Added
+
+- **Origin pinning for protected-resource metadata behind a proxy.** A host can
+  now pin the advertised `resource`/challenge origin and `authorization_servers`
+  instead of always deriving them from the live request connection, which behind
+  a TLS-terminating proxy is both fragile (`http`/internal host) and an
+  `X-Forwarded-Host` spoofing vector into the metadata document a client trusts
+  to find its authorization server.
+  - `AttestoMCP.Metadata.resolve_origin/2` resolves the resource server origin:
+    an explicit `:base_url`/`:origin` (a `String.t()` or `(conn -> url)`) wins
+    over the request connection. It drives the `resource` identifier and the
+    `protected_resource_url/3` challenge URL.
+  - `AttestoMCP.Metadata.protected_resource/3` now defaults
+    `authorization_servers` to the `:config` issuer (or an explicit `:issuer`
+    string) when one is given, rather than the resource origin — the issuer is
+    the authorization server the host already trusts. The `resource` identifier
+    is **not** derived from the issuer (RFC 9728 keeps the two distinct).
+  - The router macro `attesto_mcp_protected_resource_metadata`,
+    `AttestoMCP.MetadataController`, `AttestoMCP.Plug.Authenticate`, and
+    `AttestoMCP.Plug.ProtectResource` all accept and thread `:base_url`/`:origin`
+    (and `:issuer`/`:config`), so the served metadata and the
+    `WWW-Authenticate` `resource_metadata` challenge stay aligned when pinned.
+    `:base_url`/`:origin` accept a string, a `(conn -> url)` callback, or a
+    `{module, fun}` / `{module, fun, args}` tuple (so a dynamic origin works in a
+    compiled router macro, where an anonymous fn cannot).
+  - The generated `resource_metadata` challenge is now emitted consistently on
+    every rejection the MCP plugs render - token failure, principal-callback
+    rejection (a 401 from `AttestoMCP.Plug.Authenticate`), and insufficient-scope
+    rejection (a 403 from `AttestoMCP.Plug.RequireScopes` via `ProtectResource`)
+    - so a client is pointed at metadata on all of them, not just token failures.
+  - New `guides/proxy_origin.md` documents the pinned-origin recipe so consumers
+    do not reinvent a canonical-host guard plug.
+
+### Fixed
+
+- `authorization_servers` advertises the issuer **verbatim**: it is no longer
+  trailing-slash-trimmed, since an issuer identifier is compared by exact string
+  match (a trimmed path-based issuer would break discovery). The resource origin
+  is still trimmed (it is joined with a path). A blank explicit `:issuer` is
+  ignored rather than publishing `[""]` or overriding a configured issuer.
+- A blank, relative, or non-binary `:base_url`/`:origin` pin (`""`, `"/"`,
+  `"/prefix"`, `"mcp.example.com"`, …) is treated as "not configured" and falls
+  back (`:base_url` → `:origin` → request origin) instead of producing relative
+  or empty security metadata (no more `resource: "/mcp"` or
+  `authorization_servers: [""]`). A pin must be an absolute `scheme://…` origin.
+- An explicit `:resource` / `:authorization_servers` now short-circuits the
+  derivation, so a lower-precedence origin/issuer callback is never invoked (and
+  cannot fail) for a value the host supplied outright. The resource origin is
+  also resolved at most once per document and shared with the
+  `authorization_servers` fallback, so a stateful origin callback cannot make
+  the `resource` and `authorization_servers` disagree.
+
+### Changed
+
+- `AttestoMCP.Metadata.protected_resource/3` now sets `resource` with `put_new`
+  (was `put`), so an explicit `:resource` opt overrides the derived identifier —
+  matching how `:authorization_servers` already behaved.
+- With no pinning options supplied, behavior is unchanged: both origins derive
+  from the request connection.
+
 ## [0.5.2] - 2026-05-31
 
 ### Fixed

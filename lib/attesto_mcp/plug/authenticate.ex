@@ -22,12 +22,26 @@ defmodule AttestoMCP.Plug.Authenticate do
 
     * `:principal` - optional callback that receives verified claims and sender
       context, returning `{:ok, principal}` or `{:error, reason}`.
-    * `:resource_metadata_url` - URL string or `(conn -> url)` callback that
-      appends an RFC 9728 `resource_metadata` auth-param to
-      `WWW-Authenticate` challenges unless a custom `:www_authenticate`
-      callback is already supplied.
+    * `:resource_metadata_url` - URL string, `(conn -> url)` callback, or
+      `{module, fun}` / `{module, fun, args}` tuple that appends an RFC 9728
+      `resource_metadata` auth-param to `WWW-Authenticate` challenges unless a
+      custom `:www_authenticate` callback is already supplied. This is a total
+      override: it takes precedence over `:base_url`/`:origin`, and a `(conn ->
+      url)` form that derives from the connection bypasses origin pinning - pin
+      via `:base_url`/`:origin` (which the default derivation honors) rather than
+      a conn-deriving `:resource_metadata_url` callback behind a proxy. A custom
+      `:www_authenticate` callback replaces challenge handling entirely, so it
+      must append its own `resource_metadata` if wanted.
     * `:resource_path` - MCP endpoint path used to derive
-      `:resource_metadata_url` from the live request origin.
+      `:resource_metadata_url`. Its origin is resolved by
+      `AttestoMCP.Metadata.resolve_origin/2`, so a pinned origin applies.
+    * `:base_url` / `:origin` - pin the origin of the derived
+      `resource_metadata` challenge URL (a `String.t()` or `(conn -> url)`),
+      instead of deriving it from the request connection. Use behind a
+      TLS-terminating proxy so the advertised metadata URL cannot be spoofed
+      via `X-Forwarded-*`. When omitted, the live request origin is used. This
+      origin is the resource server's own; it is independent of the `:config`
+      issuer (the authorization server).
   """
 
   @behaviour Plug
@@ -93,25 +107,49 @@ defmodule AttestoMCP.Plug.Authenticate do
     end
   end
 
+  @doc false
+  # The `WWW-Authenticate` callback that appends the RFC 9728 `resource_metadata`
+  # auth-param, shared so every rejection path the MCP plugs emit (token failure,
+  # principal rejection, and - via `ProtectResource` - scope rejection) points a
+  # client at the same metadata. Returns `nil` when the host supplied its own
+  # `:www_authenticate` (a total override) or no metadata URL can be resolved.
+  @spec metadata_www_authenticate(keyword()) :: (Plug.Conn.t(), String.t() -> Plug.Conn.t()) | nil
+  def metadata_www_authenticate(opts) do
+    cond do
+      Keyword.has_key?(opts, :www_authenticate) ->
+        nil
+
+      metadata_url = metadata_url_resolver(opts) ->
+        fn conn, challenge ->
+          put_resp_header(conn, "www-authenticate", Metadata.append_resource_metadata(challenge, metadata_url.(conn)))
+        end
+
+      true ->
+        nil
+    end
+  end
+
   defp core_opts(opts, claims_key) do
     opts
-    |> Keyword.drop([:principal, :principal_key, :resource_metadata_url, :resource_path, :scopes_key, :sender_key])
+    |> Keyword.drop([
+      :base_url,
+      :origin,
+      :issuer,
+      :principal,
+      :principal_key,
+      :resource_metadata_url,
+      :resource_path,
+      :scopes_key,
+      :sender_key
+    ])
     |> Keyword.put(:claims_key, claims_key)
     |> maybe_put_metadata_challenge(opts)
   end
 
   defp maybe_put_metadata_challenge(core_opts, opts) do
-    cond do
-      Keyword.has_key?(core_opts, :www_authenticate) ->
-        core_opts
-
-      metadata_url = metadata_url_resolver(opts) ->
-        Keyword.put(core_opts, :www_authenticate, fn conn, challenge ->
-          put_resp_header(conn, "www-authenticate", Metadata.append_resource_metadata(challenge, metadata_url.(conn)))
-        end)
-
-      true ->
-        core_opts
+    case metadata_www_authenticate(opts) do
+      nil -> core_opts
+      www_authenticate -> Keyword.put_new(core_opts, :www_authenticate, www_authenticate)
     end
   end
 
@@ -123,16 +161,26 @@ defmodule AttestoMCP.Plug.Authenticate do
       fun when is_function(fun, 1) ->
         fun
 
+      {module, fun} when is_atom(module) and is_atom(fun) ->
+        fn conn -> apply(module, fun, [conn]) end
+
+      {module, fun, args} when is_atom(module) and is_atom(fun) and is_list(args) ->
+        fn conn -> apply(module, fun, [conn | args]) end
+
       _ ->
-        metadata_url_from_resource_path(Keyword.get(opts, :resource_path))
+        metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
     end
   end
 
-  defp metadata_url_from_resource_path(path) when is_binary(path) do
-    fn conn -> Metadata.protected_resource_url(conn, path) end
+  # The challenge URL must agree with the served metadata `resource`, so resolve
+  # its origin the same way `AttestoMCP.Metadata` does: a pinned `:base_url` /
+  # `:origin` wins over the request connection. (The issuer is not used here -
+  # it is the authorization server, not the resource origin.)
+  defp metadata_url_from_resource_path(path, opts) when is_binary(path) do
+    fn conn -> Metadata.protected_resource_url(conn, path, opts) end
   end
 
-  defp metadata_url_from_resource_path(_path), do: nil
+  defp metadata_url_from_resource_path(_path, _opts), do: nil
 
   defp scopes(%{"scope" => scope}) when is_binary(scope), do: String.split(scope, ~r/\s+/, trim: true)
   defp scopes(_claims), do: []
@@ -153,7 +201,18 @@ defmodule AttestoMCP.Plug.Authenticate do
   defp error_opts(opts, extra) do
     opts
     |> Keyword.take([:send_error, :www_authenticate, :no_store])
+    |> put_metadata_challenge(opts)
     |> Keyword.merge(extra)
+  end
+
+  # So a principal-callback rejection (a 401 emitted here, after token
+  # verification succeeded) carries the same `resource_metadata` pointer as the
+  # token-failure path, rather than a bare challenge.
+  defp put_metadata_challenge(taken, opts) do
+    case metadata_www_authenticate(opts) do
+      nil -> taken
+      www_authenticate -> Keyword.put_new(taken, :www_authenticate, www_authenticate)
+    end
   end
 
   defp invoke(fun, args) when is_function(fun), do: apply(fun, args)

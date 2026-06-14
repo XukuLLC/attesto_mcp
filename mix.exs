@@ -8,7 +8,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "0.5.2"
+  @version "0.6.0"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -85,7 +85,7 @@ defmodule AttestoMCP.MixProject do
       main: "readme",
       source_ref: "v#{@version}",
       source_url: @url,
-      extras: ["README.md", "guides/mcp_wiring.md", "CHANGELOG.md", "LICENSE"],
+      extras: ["README.md", "guides/mcp_wiring.md", "guides/proxy_origin.md", "CHANGELOG.md", "LICENSE"],
       groups_for_extras: [
         Guides: ~r/guides\/.?/,
         Changelog: ~r/CHANGELOG\.md/,

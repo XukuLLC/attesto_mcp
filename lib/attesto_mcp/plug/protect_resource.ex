@@ -38,6 +38,12 @@ defmodule AttestoMCP.Plug.ProtectResource do
       live request origin via `AttestoMCP.Metadata.protected_resource_url/2`.
       Both names mean the same thing; `:resource` reads naturally here while
       `:resource_path` matches `AttestoMCP.Plug.Authenticate`.
+    * `:base_url` (or `:origin`) - pin the origin of the `resource_metadata`
+      challenge URL behind a TLS-terminating proxy (a `String.t()` or
+      `(conn -> url)`), instead of trusting the proxy-rewritten request. When
+      omitted, the live request origin is used. This keeps the challenge URL
+      aligned with a pinned metadata `resource` and closes the
+      `X-Forwarded-Host` spoofing vector. See `guides/proxy_origin.md`.
 
   Every other option is passed through to `AttestoMCP.Plug.Authenticate`:
   `:config`, `:replay_check`, `:nonce_check`, `:nonce_issue`, `:cert_der`,
@@ -88,6 +94,18 @@ defmodule AttestoMCP.Plug.ProtectResource do
   defp require_scopes_opts(opts) do
     opts
     |> Keyword.take(@scope_keys ++ @shared_keys)
+    |> put_metadata_challenge(opts)
+  end
+
+  # A scope rejection is rendered by RequireScopes, which does not know the
+  # resource path. Generate the same `resource_metadata` challenge Authenticate
+  # uses (from the resource/base_url opts) so an insufficient_scope 403 points
+  # the client at metadata too - unless the host supplied its own challenge.
+  defp put_metadata_challenge(scope_opts, opts) do
+    case Authenticate.metadata_www_authenticate(rename_resource(opts)) do
+      nil -> scope_opts
+      www_authenticate -> Keyword.put_new(scope_opts, :www_authenticate, www_authenticate)
+    end
   end
 
   defp rename_resource(opts) do

@@ -141,6 +141,36 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/user")
   end
 
+  test "resource_metadata_url accepts an {module, fun} tuple", %{config: config} do
+    conn =
+      :post
+      |> conn("https://mcp.example.com/mcp")
+      |> authenticate(config, resource_metadata_url: {__MODULE__, :metadata_url})
+
+    assert conn.halted
+    assert [challenge] = get_resp_header(conn, "www-authenticate")
+    assert challenge =~ ~s(resource_metadata="https://pinned.example/.well-known/oauth-protected-resource/mcp")
+  end
+
+  def metadata_url(_conn), do: "https://pinned.example/.well-known/oauth-protected-resource/mcp"
+
+  test "a custom :www_authenticate is a total override - the generated resource_metadata is suppressed", %{
+    config: config
+  } do
+    conn =
+      :post
+      |> conn("https://mcp.example.com/mcp/user")
+      |> authenticate(config,
+        resource_path: "/mcp/user",
+        www_authenticate: fn conn, _challenge ->
+          Plug.Conn.put_resp_header(conn, "www-authenticate", "Custom realm=x")
+        end
+      )
+
+    assert conn.halted
+    assert ["Custom realm=x"] = get_resp_header(conn, "www-authenticate")
+  end
+
   test "assigns stay protocol-shaped" do
     assign_names = [:attesto_mcp_claims, :attesto_mcp_principal, :attesto_mcp_scopes, :attesto_mcp_sender]
 

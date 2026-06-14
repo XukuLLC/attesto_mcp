@@ -11,10 +11,11 @@ defmodule AttestoMCP.Router do
 
   `use AttestoMCP.Router` imports `attesto_mcp_protected_resource_metadata/2`,
   which mounts both routes for a resource at `AttestoMCP.MetadataController`. The
-  served `resource` identifier is the request origin joined with the resource
-  path, which is the same value `AttestoMCP.Plug.ProtectResource` advertises in
-  its `WWW-Authenticate` `resource_metadata` challenge, so discovery and
-  challenge always agree.
+  served `resource` identifier is the resource origin (`:base_url`/`:origin` if
+  pinned, otherwise the request origin) joined with the resource path - the same
+  value `AttestoMCP.Plug.ProtectResource` advertises in its `WWW-Authenticate`
+  `resource_metadata` challenge, so discovery and challenge agree when both are
+  given the same origin (see "Pinning the origin behind a proxy" below).
 
   ## Single resource
 
@@ -49,6 +50,24 @@ defmodule AttestoMCP.Router do
   common is `:scopes` (served as `scopes_supported`); `:authorization_servers`,
   `:resource_name`, `:tls_client_certificate_bound_access_tokens`, and the other
   RFC 9728 fields are also accepted.
+
+  ## Pinning the origin behind a proxy
+
+  By default the served `resource` and `authorization_servers` are derived from
+  the live request connection. Behind a TLS-terminating reverse proxy that is
+  fragile (`http`/internal host) and spoofable (`X-Forwarded-Host`). Pass
+  `:base_url` (or `:origin`) to pin the origin instead - a `String.t()`, a
+  `&Mod.fun/1` capture, or a `{Mod, :fun}` tuple resolved at request time. Route
+  `private` is compiled, so use a string, a remote function capture, or an MFA
+  tuple - not an anonymous `fn`:
+
+      attesto_mcp_protected_resource_metadata "/mcp",
+        scopes: ["mcp:tools:call"],
+        base_url: "https://mcp.example.com"
+
+  `AttestoMCP.Plug.ProtectResource` accepts the same `:base_url`/`:origin`, so
+  the challenge URL and the served metadata stay aligned. See
+  `guides/proxy_origin.md`.
   """
 
   @doc false

@@ -84,6 +84,65 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/brokers")
   end
 
+  test "a pinned :base_url drives the challenge URL over the request host", %{config: config} do
+    # Simulate a TLS-terminating proxy: the conn arrives http on an internal
+    # host. The pinned origin must drive the resource_metadata URL so a client
+    # cannot be steered to a spoofed metadata location.
+    conn =
+      :post
+      |> conn("http://10.0.0.5/mcp/brokers")
+      |> protect(config,
+        scopes: [Scopes.tools_call()],
+        resource: "/mcp/brokers",
+        base_url: "https://mcp.example.com"
+      )
+
+    assert conn.halted
+    assert [challenge] = get_resp_header(conn, "www-authenticate")
+    assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/brokers")
+  end
+
+  test "an insufficient_scope 403 carries the resource_metadata pointer when the resource is pinned", %{
+    config: config
+  } do
+    token = Factory.access_token(config, scopes: [Scopes.resources_read()])
+
+    conn =
+      :post
+      |> conn("http://10.0.0.5/mcp/brokers")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> protect(config,
+        scopes: [Scopes.tools_call()],
+        resource: "/mcp/brokers",
+        base_url: "https://mcp.example.com"
+      )
+
+    assert conn.status == 403
+    assert JSON.decode!(conn.resp_body)["error"] == "insufficient_scope"
+    assert [challenge] = get_resp_header(conn, "www-authenticate")
+    assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/brokers")
+  end
+
+  test "a principal-callback rejection 401 carries the resource_metadata pointer", %{config: config} do
+    token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+
+    conn =
+      :post
+      |> conn("http://10.0.0.5/mcp/brokers")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> protect(config,
+        scopes: [Scopes.tools_call()],
+        resource: "/mcp/brokers",
+        base_url: "https://mcp.example.com",
+        principal: fn _claims, _sender -> {:error, :rejected} end
+      )
+
+    assert conn.status == 401
+    assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    assert [challenge] = get_resp_header(conn, "www-authenticate")
+    assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/brokers")
+  end
+
   test "the single required scope is accepted via :scope", %{config: config} do
     token = Factory.access_token(config, scopes: [Scopes.tools_call()])
 

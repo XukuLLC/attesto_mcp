@@ -7,6 +7,11 @@ defmodule AttestoMCP.RouterTest do
 
   alias AttestoMCP.Scopes
 
+  defmodule Origins do
+    @moduledoc false
+    def canonical(_conn), do: "https://tuple.example"
+  end
+
   defmodule TestRouter do
     @moduledoc false
     use Phoenix.Router
@@ -21,6 +26,14 @@ defmodule AttestoMCP.RouterTest do
 
       attesto_mcp_protected_resource_metadata "/mcp/foo", scopes: [Scopes.server("foo", :tools_call)]
       attesto_mcp_protected_resource_metadata "/mcp/bar", scopes: [Scopes.server("bar", :tools_call)]
+
+      attesto_mcp_protected_resource_metadata "/mcp/pinned",
+        scopes: [Scopes.server("pinned", :tools_call)],
+        base_url: "https://canonical.example"
+
+      attesto_mcp_protected_resource_metadata "/mcp/tuple",
+        scopes: [Scopes.server("tuple", :tools_call)],
+        base_url: {Origins, :canonical}
     end
   end
 
@@ -59,6 +72,23 @@ defmodule AttestoMCP.RouterTest do
                build_conn("/.well-known/oauth-protected-resource/mcp/foo"),
                "/mcp/foo"
              )["resource"]
+  end
+
+  test "a :base_url on the macro pins the served resource origin over the request host" do
+    # The request arrives at mcp.example.com; the pinned origin must win, proving
+    # a string base_url survives the compiled route private and reaches the
+    # controller.
+    metadata = get_metadata("/.well-known/oauth-protected-resource/mcp/pinned")
+
+    assert metadata["resource"] == "https://canonical.example/mcp/pinned"
+  end
+
+  test "an {module, fun} base_url tuple survives compiled route private and pins the resource" do
+    # A tuple must actually resolve at request time, not silently fall back to
+    # the request host the way an unrecognized term would.
+    metadata = get_metadata("/.well-known/oauth-protected-resource/mcp/tuple")
+
+    assert metadata["resource"] == "https://tuple.example/mcp/tuple"
   end
 
   defp get_metadata(path) do
