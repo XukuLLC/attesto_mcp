@@ -6,6 +6,22 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-06-14
+
+### Fixed
+
+- **The `mix attesto_mcp.install` task no longer references `Igniter.Mix.Task`
+  unconditionally, so attesto_mcp compiles in a consumer that does not depend on
+  `igniter`.** `igniter` is an optional dependency, but the install task did
+  `use Igniter.Mix.Task` at the top level. In a consumer application that
+  depends on attesto_mcp without also pulling in `igniter` (the common prod
+  case), compiling attesto_mcp failed with `module Igniter.Mix.Task is not
+  loaded and could not be found`. The task is now wrapped in a top-level
+  `if Code.ensure_loaded?(Igniter)` guard: the Igniter-backed installer compiles
+  only when `igniter` is present, and a `use Mix.Task` fallback that prints a
+  "install igniter to use this task" message takes its place otherwise. Behavior
+  is unchanged when `igniter` is available.
+
 ## [0.6.1] - 2026-06-14
 
 ### Fixed
