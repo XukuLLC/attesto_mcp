@@ -143,6 +143,26 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/brokers")
   end
 
+  test "a host :www_authenticate overrides the generated resource_metadata on a scope rejection", %{
+    config: config
+  } do
+    token = Factory.access_token(config, scopes: [Scopes.resources_read()])
+
+    conn =
+      :post
+      |> conn("https://mcp.example.com/mcp/brokers")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> protect(config,
+        scopes: [Scopes.tools_call()],
+        resource: "/mcp/brokers",
+        www_authenticate: fn c, _challenge -> put_resp_header(c, "www-authenticate", "Custom realm=x") end
+      )
+
+    assert conn.status == 403
+    # The host's total override wins; the generated resource_metadata is not applied.
+    assert ["Custom realm=x"] = get_resp_header(conn, "www-authenticate")
+  end
+
   test "the single required scope is accepted via :scope", %{config: config} do
     token = Factory.access_token(config, scopes: [Scopes.tools_call()])
 
@@ -153,6 +173,39 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       |> protect(config, scope: Scopes.tools_call())
 
     refute conn.halted
+  end
+
+  test "init/1 is escape-safe, so the plug works as a compile-time router pipeline plug" do
+    # `plug_init_mode: :compile` (the prod / Phoenix router default) embeds the
+    # `init/1` result via `Macro.escape`, which rejects closures. A generated
+    # `resource_metadata` challenge must therefore be built at call time, never
+    # baked into init - otherwise the router carrying this plug will not compile.
+    opts = [
+      config: &Factory.config/0,
+      resource: "/mcp",
+      scopes: [Scopes.tools_call()],
+      base_url: "https://mcp.example.com"
+    ]
+
+    # The precise failure mode: escaping the init result must not raise.
+    assert opts |> ProtectResource.init() |> Macro.escape()
+  end
+
+  test "compiles inside a Plug.Builder pipeline under init_mode: :compile" do
+    defmodule CompiledMCPPipeline do
+      @moduledoc false
+      use Plug.Builder, init_mode: :compile
+
+      plug ProtectResource,
+        config: &Factory.config/0,
+        resource: "/mcp",
+        scopes: ["mcp:tools:call"],
+        base_url: "https://mcp.example.com"
+    end
+
+    # If init/1 baked a closure the defmodule above would have raised at compile
+    # time; reaching here (with a usable plug) proves the compile-mode wiring.
+    assert function_exported?(CompiledMCPPipeline, :call, 2)
   end
 
   defp dpop_jkt do

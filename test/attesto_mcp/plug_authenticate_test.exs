@@ -177,6 +177,15 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     assert Enum.all?(assign_names, &String.starts_with?(Atom.to_string(&1), "attesto_mcp_"))
   end
 
+  test "init/1 is escape-safe, so the plug works as a compile-time pipeline plug" do
+    # init/1 must bake no closure: under plug_init_mode: :compile its result is
+    # embedded via Macro.escape, which rejects anonymous functions. The generated
+    # resource_metadata challenge is built in call/2, never in init/1.
+    opts = [config: &Factory.config/0, resource_path: "/mcp", base_url: "https://mcp.example.com"]
+
+    assert opts |> Authenticate.init() |> Macro.escape()
+  end
+
   defp authenticate(conn, config, opts \\ []) do
     opts =
       Keyword.merge(

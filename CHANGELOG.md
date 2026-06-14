@@ -6,6 +6,24 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-06-14
+
+### Fixed
+
+- **`AttestoMCP.Plug.ProtectResource` can again be used as a compile-time router
+  pipeline plug (`plug_init_mode: :compile`).** 0.6.0 made `init/1` bake the
+  generated `resource_metadata` `WWW-Authenticate` closure into the
+  `RequireScopes` transport. Under `:compile` mode (the Phoenix router /
+  production default) a plug's `init/1` result is embedded via `Macro.escape`,
+  which rejects anonymous functions, so a router carrying the plug failed to
+  compile. The generated challenge is now built at **call** time from an
+  escape-safe spec (strings / `{m, f}` tuples), so `init/1` returns no closures
+  and the plug compiles in a `:compile`-mode pipeline. Behavior is unchanged: an
+  insufficient-scope 403 still carries the `resource_metadata` pointer, and a
+  host-supplied `:www_authenticate` still wins. (Callbacks the host passes to the
+  plug must be remote captures or MFA tuples, not anonymous `fn`, to be embedded
+  under `:compile` mode — the same constraint Plug imposes on every plug.)
+
 ## [0.6.0] - 2026-06-14
 
 ### Added

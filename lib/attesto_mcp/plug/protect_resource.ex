@@ -18,6 +18,12 @@ defmodule AttestoMCP.Plug.ProtectResource do
         resource: "/mcp",
         scopes: [AttestoMCP.Scopes.tools_call()]
 
+  `init/1` returns no closures, so the plug works as a compile-time router
+  pipeline plug (`plug_init_mode: :compile`, the production default). As Plug
+  requires under `:compile` mode, any callback the host passes (`:config`,
+  `:replay_check`, `:send_error`, …) must be a remote capture (`&Mod.fun/n`) or
+  an MFA tuple (`{Mod, :fun}`), not an anonymous `fn`.
+
   This is exactly equivalent to:
 
       plug AttestoMCP.Plug.Authenticate,
@@ -66,22 +72,34 @@ defmodule AttestoMCP.Plug.ProtectResource do
   @scope_keys [:scope, :scopes]
   @shared_keys [:send_error, :www_authenticate, :claims_key, :scopes_key]
 
+  # The escape-safe inputs (strings / atoms / `{m, f}` tuples - never a closure)
+  # RequireScopes needs to derive the same RFC 9728 `resource_metadata` challenge
+  # Authenticate uses. `:www_authenticate` is deliberately excluded: a host
+  # override is already carried in the RequireScopes transport (via `@shared_keys`)
+  # and wins there, so it never needs to be re-derived here.
+  @metadata_keys [:resource_metadata_url, :resource_path, :base_url, :origin]
+
   @impl Plug
   def init(opts) when is_list(opts) do
     %{
       authenticate: Authenticate.init(authenticate_opts(opts)),
-      require_scopes: RequireScopes.init(require_scopes_opts(opts))
+      require_scopes: RequireScopes.init(require_scopes_opts(opts)),
+      # Escape-safe spec used to build the scope-rejection `resource_metadata`
+      # challenge at CALL time. Baking the generated `:www_authenticate` closure
+      # into init/1 would make the result non-escapable, so the plug could not be
+      # used as a compile-time router pipeline plug (`plug_init_mode: :compile`).
+      metadata_challenge: metadata_challenge_opts(opts)
     }
   end
 
   @impl Plug
-  def call(conn, %{authenticate: authenticate, require_scopes: require_scopes}) do
+  def call(conn, %{authenticate: authenticate, require_scopes: require_scopes, metadata_challenge: metadata_challenge}) do
     conn = Authenticate.call(conn, authenticate)
 
     if conn.halted do
       conn
     else
-      RequireScopes.call(conn, require_scopes)
+      RequireScopes.call(conn, put_metadata_challenge(require_scopes, metadata_challenge))
     end
   end
 
@@ -92,19 +110,31 @@ defmodule AttestoMCP.Plug.ProtectResource do
   end
 
   defp require_scopes_opts(opts) do
-    opts
-    |> Keyword.take(@scope_keys ++ @shared_keys)
-    |> put_metadata_challenge(opts)
+    Keyword.take(opts, @scope_keys ++ @shared_keys)
   end
 
-  # A scope rejection is rendered by RequireScopes, which does not know the
-  # resource path. Generate the same `resource_metadata` challenge Authenticate
-  # uses (from the resource/base_url opts) so an insufficient_scope 403 points
-  # the client at metadata too - unless the host supplied its own challenge.
-  defp put_metadata_challenge(scope_opts, opts) do
-    case Authenticate.metadata_www_authenticate(rename_resource(opts)) do
-      nil -> scope_opts
-      www_authenticate -> Keyword.put_new(scope_opts, :www_authenticate, www_authenticate)
+  defp metadata_challenge_opts(opts) do
+    opts
+    |> rename_resource()
+    |> Keyword.take(@metadata_keys)
+  end
+
+  # At CALL time, build the generated `resource_metadata` challenge from the
+  # escape-safe spec and inject it into the RequireScopes transport, so an
+  # insufficient_scope 403 points the client at metadata too. `put_new` means a
+  # host-supplied `:www_authenticate` (already in the transport) wins.
+  defp put_metadata_challenge(require_scopes, metadata_challenge) do
+    case Authenticate.metadata_www_authenticate(metadata_challenge) do
+      nil ->
+        require_scopes
+
+      www_authenticate ->
+        Map.update(
+          require_scopes,
+          :transport,
+          [www_authenticate: www_authenticate],
+          &Keyword.put_new(&1, :www_authenticate, www_authenticate)
+        )
     end
   end
 
