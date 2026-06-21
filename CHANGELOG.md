@@ -40,7 +40,7 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - The `mix attesto_mcp.install` tests declare `phx_new` (test-only) so
   `Igniter.Test.phx_test_project/1` has the Phoenix project generator
-  (`Igniter.Phoenix.Single`, compile-guarded on `Phx.New.Project`) it needs.
+  (Igniter.Phoenix.Single, compile-guarded on Phx.New.Project) it needs.
 
 ## [0.6.2] - 2026-06-14
 

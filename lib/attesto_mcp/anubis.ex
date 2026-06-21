@@ -14,7 +14,7 @@ if Code.ensure_loaded?(Anubis.Server.Frame) do
     identity from `frame.context.auth` (an `Anubis.Server.Context` field), which
     is `nil` until a host populates it. `put_auth/1` performs that one
     projection: `frame.assigns[:attesto_context]` -> `frame.context.auth`, in the
-    `Anubis.Server.Context.auth_claims/0` shape.
+    auth-claims map shape `Anubis.Server.Context` documents.
 
     The projection is purely mechanical. It carries no application policy - no
     scope-superset/admin expansion, no role mapping, no tenant or audit logic,
