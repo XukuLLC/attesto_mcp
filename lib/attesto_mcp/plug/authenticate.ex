@@ -12,6 +12,14 @@ defmodule AttestoMCP.Plug.Authenticate do
     * `:scopes_key` - `:attesto_mcp_scopes`
     * `:sender_key` - `:attesto_mcp_sender`
     * `:principal_key` - `:attesto_mcp_principal`
+    * `:context_key` - `:attesto_context`
+
+  Alongside the MCP-specific assigns above, the plug also assigns a single
+  protocol-shaped context map under `:context_key` (default `:attesto_context`),
+  identical in shape to the one `AttestoPhoenix.Plug.Authenticate` assigns:
+  `%{subject, client_id, scope (list), claims, cnf, principal}`. This is the
+  canonical cross-plug auth context; `AttestoMCP.Anubis.put_auth/1` projects it
+  into the Anubis frame regardless of which authenticator ran.
 
   Options accepted by `Attesto.Plug.Authenticate`, including `:config`,
   `:replay_check`, `:nonce_check`, `:nonce_issue`, `:cert_der`, `:htu`,
@@ -49,13 +57,14 @@ defmodule AttestoMCP.Plug.Authenticate do
   import Plug.Conn
 
   alias Attesto.Plug.Authenticate, as: AttestoAuthenticate
+  alias Attesto.Plug.OAuthError
   alias AttestoMCP.Metadata
-  alias AttestoMCP.Plug.Error
 
   @claims_key :attesto_mcp_claims
   @scopes_key :attesto_mcp_scopes
   @sender_key :attesto_mcp_sender
   @principal_key :attesto_mcp_principal
+  @context_key :attesto_context
 
   @impl Plug
   def init(opts) when is_list(opts) do
@@ -83,28 +92,51 @@ defmodule AttestoMCP.Plug.Authenticate do
     sender = sender_context(claims)
     scopes = scopes(claims)
 
-    conn =
-      conn
-      |> assign(Keyword.get(opts, :scopes_key, @scopes_key), scopes)
-      |> assign(Keyword.get(opts, :sender_key, @sender_key), sender)
+    # Resolve the optional principal BEFORE assigning, so a principal-callback
+    # rejection halts without leaving partial context on the conn.
+    case resolve_principal(opts, claims, sender) do
+      {:ok, principal} ->
+        conn
+        |> assign(Keyword.get(opts, :scopes_key, @scopes_key), scopes)
+        |> assign(Keyword.get(opts, :sender_key, @sender_key), sender)
+        |> maybe_assign_principal(opts, principal)
+        |> assign(Keyword.get(opts, :context_key, @context_key), context(claims, scopes, principal))
 
-    assign_principal(conn, opts, claims, sender)
+      :error ->
+        OAuthError.unauthorized(conn, scheme_of(claims), "invalid_token", error_opts(opts, []))
+    end
   end
 
-  defp assign_principal(conn, opts, claims, sender) do
+  defp resolve_principal(opts, claims, sender) do
     case Keyword.get(opts, :principal) do
       nil ->
-        conn
+        {:ok, nil}
 
       callback ->
         case invoke(callback, [claims, sender]) do
-          {:ok, principal} ->
-            assign(conn, Keyword.get(opts, :principal_key, @principal_key), principal)
-
-          {:error, _reason} ->
-            Error.unauthorized(conn, scheme_of(claims), "invalid_token", error_opts(opts, []))
+          {:ok, principal} -> {:ok, principal}
+          {:error, _reason} -> :error
         end
     end
+  end
+
+  defp maybe_assign_principal(conn, _opts, nil), do: conn
+
+  defp maybe_assign_principal(conn, opts, principal),
+    do: assign(conn, Keyword.get(opts, :principal_key, @principal_key), principal)
+
+  # The canonical cross-plug auth context, shaped identically to
+  # `AttestoPhoenix.Plug.Authenticate`'s `:attesto_context` so a single
+  # downstream consumer (e.g. `AttestoMCP.Anubis.put_auth/1`) reads either.
+  defp context(claims, scopes, principal) do
+    %{
+      subject: claims["sub"],
+      client_id: claims["client_id"],
+      scope: scopes,
+      claims: claims,
+      cnf: Map.get(claims, "cnf"),
+      principal: principal
+    }
   end
 
   @doc false
@@ -133,6 +165,7 @@ defmodule AttestoMCP.Plug.Authenticate do
     opts
     |> Keyword.drop([
       :base_url,
+      :context_key,
       :origin,
       :issuer,
       :principal,

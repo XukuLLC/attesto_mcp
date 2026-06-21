@@ -6,6 +6,42 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-06-21
+
+### Added
+
+- **`AttestoMCP.Anubis.put_auth/1`** — an optional bridge that projects the
+  verified `:attesto_context` into an Anubis MCP server's `frame.context.auth`,
+  so Anubis's framework-level authorization (the `tools/list` visibility filter,
+  per-tool scope gates) sees the resource-server identity. `anubis_mcp` is an
+  optional dependency and the module is compile-guarded on `Anubis.Server.Frame`,
+  so a resource server that does not use Anubis never compiles it or pulls it in.
+  The projection is purely mechanical — no scope-superset, role, or visibility
+  policy, which stay in the host app.
+- **`AttestoMCP.Plug.Authenticate` now assigns `:attesto_context`** — a single
+  protocol-shaped context map (`%{subject, client_id, scope, claims, cnf,
+  principal}`), identical to the one `AttestoPhoenix.Plug.Authenticate` assigns,
+  under the new `:context_key` option (default `:attesto_context`). This is the
+  canonical cross-plug auth context the Anubis bridge reads, so the bridge works
+  whether a request was authenticated by the MCP plug or the Phoenix plug.
+
+### Changed
+
+- **MCP scope-rejection rendering now delegates fully to attesto core.**
+  `AttestoMCP.Plug.RequireScopes` renders its 403 `insufficient_scope` through
+  `Attesto.Plug.OAuthError.insufficient_scope/4`, which now honors the
+  `:send_error` / `:www_authenticate` / `:no_store` transport hooks. This removes
+  the local 403 gap-filler and the `AttestoMCP.Plug.Error` shim (the on-the-wire
+  challenge and body are unchanged). **Requires `attesto ~> 0.8.1`.**
+- **The `:no_store` transport hook** now threads through `RequireScopes` and
+  `ProtectResource`, at parity with `:send_error` / `:www_authenticate`.
+
+### Fixed
+
+- The `mix attesto_mcp.install` tests declare `phx_new` (test-only) so
+  `Igniter.Test.phx_test_project/1` has the Phoenix project generator
+  (`Igniter.Phoenix.Single`, compile-guarded on `Phx.New.Project`) it needs.
+
 ## [0.6.2] - 2026-06-14
 
 ### Fixed

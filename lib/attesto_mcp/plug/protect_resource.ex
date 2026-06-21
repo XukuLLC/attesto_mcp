@@ -56,9 +56,10 @@ defmodule AttestoMCP.Plug.ProtectResource do
   `:htu`, `:credential_from_conn`, `:send_error`, `:www_authenticate`,
   `:no_store`, `:principal`, `:principal_key`, `:claims_key`, `:scopes_key`,
   `:sender_key`, and `:resource_metadata_url`. The transport hooks
-  (`:send_error`, `:www_authenticate`) and the assign keys (`:claims_key`,
-  `:scopes_key`) are also shared with `AttestoMCP.Plug.RequireScopes` so a
-  scope rejection renders through the same host-controlled error envelope.
+  (`:send_error`, `:www_authenticate`, `:no_store`) and the assign keys
+  (`:claims_key`, `:scopes_key`) are also shared with
+  `AttestoMCP.Plug.RequireScopes` so a scope rejection renders through the same
+  host-controlled error envelope.
   """
 
   @behaviour Plug
@@ -70,7 +71,7 @@ defmodule AttestoMCP.Plug.ProtectResource do
   # shared with Authenticate so both steps render through one error envelope and
   # read the same assigns.
   @scope_keys [:scope, :scopes]
-  @shared_keys [:send_error, :www_authenticate, :claims_key, :scopes_key]
+  @shared_keys [:send_error, :www_authenticate, :no_store, :claims_key, :scopes_key]
 
   # The escape-safe inputs (strings / atoms / `{m, f}` tuples - never a closure)
   # RequireScopes needs to derive the same RFC 9728 `resource_metadata` challenge

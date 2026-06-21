@@ -3,16 +3,31 @@ defmodule AttestoMCP.Plug.RequireScopes do
   Require scopes on a request authenticated by `AttestoMCP.Plug.Authenticate`.
 
   The plug reads the verified scope list from `conn.assigns` and checks it with
-  `Attesto.Scope`. It does not encode MCP policy; routes choose their own
-  required scopes.
+  `Attesto.Scope` (the same scope algebra `Attesto.Plug.RequireScopes` uses). It
+  does not encode MCP policy; routes choose their own required scopes.
 
       plug AttestoMCP.Plug.RequireScopes, scopes: [AttestoMCP.Scopes.tools_call()]
+
+  Rejections are rendered through `Attesto.Plug.OAuthError`: a request that is
+  not authenticated gets a 401 `invalid_token`, and an authenticated request
+  that is missing a required scope gets a 403 `insufficient_scope` (RFC 6750
+  §3.1). Both delegate to `Attesto.Plug.OAuthError`, threading the per-request
+  `:www_authenticate` / `:send_error` transport hooks
+  `AttestoMCP.Plug.ProtectResource` injects, so a scope rejection carries the
+  same RFC 9728 `resource_metadata` challenge and host-controlled error envelope
+  the authentication rejection does.
+
+  This plug reads MCP-specific assign keys (`:attesto_mcp_claims` /
+  `:attesto_mcp_scopes`, set by `AttestoMCP.Plug.Authenticate`) and a pre-split
+  granted-scope list; that is why it is a thin wrapper over the OAuthError
+  renderer rather than a direct use of `Attesto.Plug.RequireScopes` (which reads
+  the `scope` claim under its own key).
   """
 
   @behaviour Plug
 
+  alias Attesto.Plug.OAuthError
   alias Attesto.Scope
-  alias AttestoMCP.Plug.Error
 
   @claims_key :attesto_mcp_claims
   @scopes_key :attesto_mcp_scopes
@@ -30,7 +45,7 @@ defmodule AttestoMCP.Plug.RequireScopes do
       claims_key: Keyword.get(opts, :claims_key, @claims_key),
       required: required,
       scopes_key: Keyword.get(opts, :scopes_key, @scopes_key),
-      transport: Keyword.take(opts, [:send_error, :www_authenticate])
+      transport: Keyword.take(opts, [:send_error, :www_authenticate, :no_store])
     }
   end
 
@@ -43,10 +58,15 @@ defmodule AttestoMCP.Plug.RequireScopes do
         conn
 
       is_list(granted) ->
-        Error.insufficient_scope(conn, opts.required, scheme_of(conn.assigns[opts.claims_key]), opts.transport)
+        OAuthError.insufficient_scope(
+          conn,
+          opts.required,
+          scheme_of(conn.assigns[opts.claims_key]),
+          opts.transport
+        )
 
       true ->
-        Error.unauthorized(
+        OAuthError.unauthorized(
           conn,
           :bearer,
           "invalid_token",

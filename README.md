@@ -63,7 +63,7 @@ is a normal Plug boundary.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 0.5"}
+    {:attesto_mcp, "~> 0.6"}
   ]
 end
 ```
@@ -103,12 +103,28 @@ scope "/" do
 end
 ```
 
+`AttestoMCP.Plug.ProtectResource` composes the two plugs above —
+authenticate, then require scopes — into one correctly-ordered, halt-respecting
+plug, so a route declares both in a single line and both render through the same
+error envelope and `resource_metadata` challenge:
+
+```elixir
+plug AttestoMCP.Plug.ProtectResource,
+  config: &MyApp.Attesto.config/0,
+  replay_check: &MyApp.DPoPReplay.check_and_record/2,
+  resource: "/mcp",
+  scopes: [AttestoMCP.Scopes.tools_call()]
+```
+
 After authentication, downstream code can read:
 
 - `conn.assigns.attesto_mcp_claims`
 - `conn.assigns.attesto_mcp_scopes`
 - `conn.assigns.attesto_mcp_sender`
 - `conn.assigns.attesto_mcp_principal`, if `:principal` is configured
+- `conn.assigns.attesto_context` - a neutral `%{subject, client_id, scope,
+  claims, cnf, principal}` map, the same protocol-shaped context
+  `AttestoPhoenix.Plug.Authenticate` assigns
 
 For mTLS-bound access tokens, supply certificate context from your TLS layer:
 
@@ -154,6 +170,26 @@ using `attesto_phoenix`, enable its registration route and callbacks there. Only
 advertise registration response fields such as `client_secret_expires_at`,
 `registration_access_token`, and `registration_client_uri` if the authorization
 server implementation returns and persists them correctly.
+
+## Anubis servers
+
+If your MCP server runs on [Anubis](https://hex.pm/packages/anubis_mcp), its
+framework-level authorization (the `tools/list` visibility filter, per-tool scope
+gates) reads identity from `frame.context.auth`, not `conn.assigns`.
+`AttestoMCP.Anubis.put_auth/1` projects the verified `:attesto_context` into that
+field — call it once at the top of `handle_request/2`:
+
+```elixir
+def handle_request(request, frame) do
+  frame = AttestoMCP.Anubis.put_auth(frame)
+  # Anubis authorization now sees the verified subject/scopes/claims.
+end
+```
+
+`anubis_mcp` is an optional dependency: the bridge module compiles only when
+Anubis is present, so a non-Anubis resource server pays nothing for it. The
+projection is purely mechanical — no scope-superset, role, or visibility policy,
+which stay in your app.
 
 ## Scope conventions
 

@@ -5,6 +5,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
   import Plug.Conn
   import Plug.Test
 
+  alias Anubis.Server.Frame
   alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Test.DPoPReplay
   alias AttestoMCP.Test.Factory
@@ -26,6 +27,35 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     assert conn.assigns.attesto_mcp_claims["sub"] == "usr_123"
     assert conn.assigns.attesto_mcp_scopes == [AttestoMCP.Scopes.tools_call()]
     assert conn.assigns.attesto_mcp_sender == %{binding: :bearer}
+  end
+
+  test "assigns the canonical :attesto_context, which the Anubis bridge projects", %{config: config} do
+    token = Factory.access_token(config)
+
+    conn =
+      :post
+      |> conn("/mcp")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> authenticate(config)
+
+    ctx = conn.assigns.attesto_context
+    assert ctx.subject == "usr_123"
+    assert ctx.client_id == "client-1"
+    assert ctx.scope == [AttestoMCP.Scopes.tools_call()]
+    assert ctx.claims["sub"] == "usr_123"
+    assert ctx.cnf == nil
+    assert ctx.principal == nil
+
+    # End-to-end: the Anubis transport copies conn.assigns into frame.assigns, so
+    # the bridge projects the real plug output into frame.context.auth. (This is
+    # the path a manually-constructed :attesto_context in the bridge unit tests
+    # cannot cover.)
+    frame = Frame.new(conn.assigns)
+    auth = AttestoMCP.Anubis.put_auth(frame).context.auth
+    assert auth.sub == "usr_123"
+    assert auth.client_id == "client-1"
+    assert auth.scope == AttestoMCP.Scopes.tools_call()
+    assert auth.scopes == [AttestoMCP.Scopes.tools_call()]
   end
 
   test "DPoP-bound token is rejected as bearer", %{config: config} do
