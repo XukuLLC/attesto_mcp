@@ -23,8 +23,15 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   Options accepted by `Attesto.Plug.Authenticate`, including `:config`,
   `:replay_check`, `:nonce_check`, `:nonce_issue`, `:cert_der`, `:htu`,
-  `:credential_from_conn`, `:send_error`, `:www_authenticate`, and
-  `:no_store`, are passed through.
+  `:credential_from_conn`, `:bearer_methods`, `:send_error`,
+  `:www_authenticate`, and `:no_store`, are passed through.
+
+  MCP defaults to `bearer_methods: [:header]`, matching protected-resource
+  metadata that advertises `bearer_methods_supported: ["header"]`. A host that
+  genuinely needs RFC 6750 §2.2 form-body tokens can opt in with
+  `bearer_methods: [:header, :body]`, but body credentials are easier to leak
+  through logs, caches, retries, and replay tooling than an `Authorization`
+  header.
 
   Additional options:
 
@@ -175,6 +182,7 @@ defmodule AttestoMCP.Plug.Authenticate do
       :scopes_key,
       :sender_key
     ])
+    |> Keyword.put_new(:bearer_methods, [:header])
     |> Keyword.put(:claims_key, claims_key)
     |> maybe_put_metadata_challenge(opts)
   end

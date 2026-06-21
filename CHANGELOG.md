@@ -6,6 +6,17 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-06-21
+
+### Changed
+
+- **MCP protected-resource authentication defaults to header-only bearer
+  credentials.** `AttestoMCP.Plug.Authenticate` and `ProtectResource` pass
+  `bearer_methods: [:header]` to attesto core unless the host opts in with
+  `bearer_methods: [:header, :body]`. This matches the MCP protected-resource
+  metadata default of `bearer_methods_supported: ["header"]`. **Requires
+  `attesto ~> 0.9`.**
+
 ## [0.7.0] - 2026-06-21
 
 ### Added

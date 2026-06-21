@@ -29,6 +29,34 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     assert conn.assigns.attesto_mcp_sender == %{binding: :bearer}
   end
 
+  test "form-body access_token is rejected by default", %{config: config} do
+    token = Factory.access_token(config)
+
+    conn =
+      %{"access_token" => token}
+      |> form_post()
+      |> authenticate(config)
+
+    assert conn.halted
+    assert conn.status == 401
+    assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+  end
+
+  test "form-body access_token is accepted only when the body bearer method is enabled", %{
+    config: config
+  } do
+    token = Factory.access_token(config)
+
+    conn =
+      %{"access_token" => token}
+      |> form_post()
+      |> authenticate(config, bearer_methods: [:header, :body])
+
+    refute conn.halted
+    assert conn.assigns.attesto_mcp_claims["sub"] == "usr_123"
+    assert conn.assigns.attesto_mcp_sender == %{binding: :bearer}
+  end
+
   test "assigns the canonical :attesto_context, which the Anubis bridge projects", %{config: config} do
     token = Factory.access_token(config)
 
@@ -227,5 +255,11 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       )
 
     Authenticate.call(conn, Authenticate.init(opts))
+  end
+
+  defp form_post(params) do
+    :post
+    |> conn("/mcp", params)
+    |> put_req_header("content-type", "application/x-www-form-urlencoded")
   end
 end

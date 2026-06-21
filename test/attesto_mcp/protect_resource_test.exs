@@ -28,6 +28,31 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     assert conn.assigns.attesto_mcp_scopes == [Scopes.tools_call()]
   end
 
+  test "form-body access_token is rejected by default", %{config: config} do
+    token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+
+    conn =
+      %{"access_token" => token}
+      |> form_post()
+      |> protect(config, scopes: [Scopes.tools_call()])
+
+    assert conn.halted
+    assert conn.status == 401
+    assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+  end
+
+  test "passes bearer_methods through to Authenticate", %{config: config} do
+    token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+
+    conn =
+      %{"access_token" => token}
+      |> form_post()
+      |> protect(config, scopes: [Scopes.tools_call()], bearer_methods: [:header, :body])
+
+    refute conn.halted
+    assert conn.assigns.attesto_mcp_claims["sub"] == "usr_123"
+  end
+
   test "a token missing the required scope is rejected with insufficient_scope", %{config: config} do
     token = Factory.access_token(config, scopes: [Scopes.resources_read()])
 
@@ -224,5 +249,11 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       )
 
     ProtectResource.call(conn, ProtectResource.init(opts))
+  end
+
+  defp form_post(params) do
+    :post
+    |> conn("/mcp", params)
+    |> put_req_header("content-type", "application/x-www-form-urlencoded")
   end
 end

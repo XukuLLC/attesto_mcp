@@ -8,7 +8,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "0.7.0"
+  @version "0.8.0"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -83,15 +83,14 @@ defmodule AttestoMCP.MixProject do
   # package. This is gated on the env var, not just `File.dir?`, so `mix
   # hex.publish` (which runs in :dev with the sibling on disk) resolves the Hex
   # constraint rather than a path dep, which cannot be packaged. The
-  # `Attesto.Plug.{OAuthError,RequireScopes}` transport hooks this MCP layer
-  # delegates its 403 to land in attesto 0.8.1; until that is published the
-  # non-path Hex resolution is RED by design (the publish-order gate), so local
-  # development sets `ATTESTO_PATH=1`.
+  # This branch depends on attesto 0.9.0 for `Attesto.Plug.Authenticate`
+  # `:bearer_methods` and the `Attesto.Plug.{OAuthError,RequireScopes}`
+  # transport hooks this MCP layer delegates to.
   defp attesto_dep do
     if System.get_env("ATTESTO_PATH") in ~w(1 true) and File.dir?("../attesto") do
       {:attesto, path: "../attesto", override: true}
     else
-      {:attesto, "~> 0.8.1"}
+      {:attesto, "~> 0.9"}
     end
   end
 

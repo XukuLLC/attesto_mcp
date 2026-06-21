@@ -53,9 +53,12 @@ defmodule AttestoMCP.Plug.ProtectResource do
 
   Every other option is passed through to `AttestoMCP.Plug.Authenticate`:
   `:config`, `:replay_check`, `:nonce_check`, `:nonce_issue`, `:cert_der`,
-  `:htu`, `:credential_from_conn`, `:send_error`, `:www_authenticate`,
-  `:no_store`, `:principal`, `:principal_key`, `:claims_key`, `:scopes_key`,
-  `:sender_key`, and `:resource_metadata_url`. The transport hooks
+  `:htu`, `:credential_from_conn`, `:bearer_methods`, `:send_error`,
+  `:www_authenticate`, `:no_store`, `:principal`, `:principal_key`,
+  `:claims_key`, `:scopes_key`, `:sender_key`, and `:resource_metadata_url`.
+  MCP defaults to `bearer_methods: [:header]`; set
+  `bearer_methods: [:header, :body]` only when the resource intentionally
+  accepts RFC 6750 §2.2 form-body access tokens. The transport hooks
   (`:send_error`, `:www_authenticate`, `:no_store`) and the assign keys
   (`:claims_key`, `:scopes_key`) are also shared with
   `AttestoMCP.Plug.RequireScopes` so a scope rejection renders through the same

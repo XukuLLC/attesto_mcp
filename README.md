@@ -6,40 +6,73 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](https://github.com/XukuLLC/attesto_mcp/blob/main/LICENSE)
 [![Elixir](https://img.shields.io/badge/elixir-%E2%89%A5%201.18-purple)](https://elixir-lang.org)
 
-Plug/Phoenix helpers for protecting HTTP-based Model Context Protocol servers
-with [attesto](https://hex.pm/packages/attesto).
+OAuth resource-server helpers for HTTP MCP servers in Plug/Phoenix: protect the
+MCP endpoint, publish OAuth discovery metadata, verify Bearer/DPoP/mTLS access
+tokens, enforce scopes, and hand the verified identity to Anubis when your MCP
+server runs on Anubis.
 
-## Where it fits
+## Why use this
 
-`attesto_mcp` is a narrow integration layer. It does not implement MCP, JSON-RPC,
-tools, prompts, resources, transports, or server lifecycle. It wraps the HTTP
-endpoint that an MCP server implementation exposes and connects that endpoint to
-Attesto's OAuth/OIDC token verification, DPoP proof verification, mTLS
-certificate binding, scope algebra, and metadata builders.
+An MCP server library gives you tools, prompts, resources, and transport
+lifecycle. OAuth still leaves several resource-server chores at the HTTP
+boundary:
 
-Use it when your MCP server is a Plug or Phoenix endpoint and you want:
+- Challenge unauthenticated clients with an RFC 9728 `resource_metadata` pointer
+  so ChatGPT, Claude, and other MCP clients can discover how to authorize.
+- Verify access tokens locally by signature, issuer, audience, expiry, and
+  sender constraint.
+- Reject DPoP-bound tokens presented as plain Bearer tokens, and reject
+  mTLS-bound tokens without matching certificate context.
+- Enforce route-level MCP scopes before the request reaches your tools.
+- Render OAuth-compatible 401/403 errors through the same host-controlled
+  response envelope.
+- Put verified subject, client, scopes, and raw claims where downstream MCP code
+  can read them.
 
-- Bearer and DPoP authorization scheme handling.
-- Rejection of DPoP-bound tokens that are presented as plain Bearer tokens.
-- Rejection of mTLS-bound tokens unless the request has matching certificate
-  thumbprint context.
-- Verified claims, scopes, and sender context in `conn.assigns`.
-- A host callback that maps verified token claims into your own principal.
-- RFC 9728 protected-resource metadata for MCP OAuth discovery.
-- OAuth-compatible errors with host-controlled rendering.
+`attesto_mcp` packages that glue as Plug modules. You still bring the MCP server
+implementation and your app's policy.
 
-## Relationship to attesto and attesto_phoenix
+## If you use Anubis
 
-`attesto` is the protocol engine: JWT access tokens, DPoP, mTLS, PKCE, JWKS,
-discovery, and scopes. `attesto_mcp` reuses those checks and adds MCP-facing
-Plug ergonomics.
+[Anubis](https://hex.pm/packages/anubis_mcp) already has authorization-aware
+helpers such as `Frame.scopes/1`, `Frame.has_scope?/2`, and scope-aware tool
+visibility. Those helpers read from `frame.context.auth`. A Plug/Phoenix auth
+pipeline, however, naturally verifies the request before the Anubis frame exists.
 
-`attesto_phoenix` is the Phoenix/Ecto authorization-server layer: routes,
-controllers, registration, stores, and Phoenix-friendly configuration. MCP
-servers that need dynamic client registration should expose it through the
-authorization server layer rather than duplicate RFC 7591 here.
+This package connects those two layers:
 
-## MCP authorization
+1. `AttestoMCP.Plug.ProtectResource` protects `/mcp` before the Anubis transport
+   handles the request.
+2. The auth plug assigns a neutral `conn.assigns.attesto_context` map containing
+   the verified subject, client ID, scopes, claims, confirmation claim, and
+   optional host principal.
+3. `AttestoMCP.Anubis.put_auth/1` projects that context into
+   `frame.context.auth`, the place Anubis expects it.
+
+```elixir
+pipeline :mcp_auth do
+  plug AttestoMCP.Plug.ProtectResource,
+    config: &MyApp.Attesto.config/0,
+    replay_check: &MyApp.DPoPReplay.check_and_record/2,
+    resource: "/mcp",
+    scopes: [AttestoMCP.Scopes.tools_call()]
+end
+
+def handle_request(request, frame) do
+  frame = AttestoMCP.Anubis.put_auth(frame)
+  # Anubis authorization helpers now see the verified subject/scopes/claims.
+end
+```
+
+That saves an Anubis host from hand-writing token parsing, DPoP proof checks,
+protected-resource challenges, scope rejection responses, and the
+`frame.context.auth` projection. It does not add role, tenant, admin, or tool
+visibility policy; keep that in your app.
+
+`anubis_mcp` is optional. The bridge module compiles only when Anubis is
+present, so non-Anubis MCP servers do not take a hard dependency on it.
+
+## MCP authorization and metadata
 
 The MCP authorization spec treats a protected HTTP MCP server as an OAuth
 resource server. Clients discover authorization information through OAuth
@@ -54,16 +87,33 @@ This package provides builders for:
   via Attesto's authorization-server metadata builder.
 - Resource identifier handling through the explicit `:resource` value you pass.
 
-It intentionally avoids a hard dependency on a specific Elixir MCP SDK. Existing
-packages have different license and maintenance profiles, and the auth boundary
-is a normal Plug boundary.
+It intentionally avoids a hard dependency on a specific Elixir MCP SDK. Anubis
+gets a bridge because its frame authorization contract is widely used and small
+to support; the core auth boundary remains a normal Plug boundary.
+
+## What this package is not
+
+`attesto_mcp` does not implement MCP, JSON-RPC, tools, prompts, resources,
+transports, or server lifecycle. It wraps the HTTP endpoint your MCP server
+implementation exposes and connects that endpoint to Attesto's OAuth/OIDC token
+verification, DPoP proof verification, mTLS certificate binding, scope algebra,
+and metadata builders.
+
+`attesto` is the protocol engine: JWT access tokens, DPoP, mTLS, PKCE, JWKS,
+discovery, and scopes. `attesto_mcp` reuses those checks and adds MCP-facing
+Plug and Anubis ergonomics.
+
+`attesto_phoenix` is the Phoenix/Ecto authorization-server layer: routes,
+controllers, registration, stores, and Phoenix-friendly configuration. MCP
+servers that need dynamic client registration should expose it through the
+authorization server layer rather than duplicate RFC 7591 here.
 
 ## Installation
 
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 0.6"}
+    {:attesto_mcp, "~> 0.8"}
   ]
 end
 ```
@@ -123,7 +173,7 @@ After authentication, downstream code can read:
 - `conn.assigns.attesto_mcp_sender`
 - `conn.assigns.attesto_mcp_principal`, if `:principal` is configured
 - `conn.assigns.attesto_context` - a neutral `%{subject, client_id, scope,
-  claims, cnf, principal}` map, the same protocol-shaped context
+  claims, cnf, principal}` map, the same protocol context
   `AttestoPhoenix.Plug.Authenticate` assigns
 
 For mTLS-bound access tokens, supply certificate context from your TLS layer:
@@ -171,26 +221,6 @@ advertise registration response fields such as `client_secret_expires_at`,
 `registration_access_token`, and `registration_client_uri` if the authorization
 server implementation returns and persists them correctly.
 
-## Anubis servers
-
-If your MCP server runs on [Anubis](https://hex.pm/packages/anubis_mcp), its
-framework-level authorization (the `tools/list` visibility filter, per-tool scope
-gates) reads identity from `frame.context.auth`, not `conn.assigns`.
-`AttestoMCP.Anubis.put_auth/1` projects the verified `:attesto_context` into that
-field — call it once at the top of `handle_request/2`:
-
-```elixir
-def handle_request(request, frame) do
-  frame = AttestoMCP.Anubis.put_auth(frame)
-  # Anubis authorization now sees the verified subject/scopes/claims.
-end
-```
-
-`anubis_mcp` is an optional dependency: the bridge module compiles only when
-Anubis is present, so a non-Anubis resource server pays nothing for it. The
-projection is purely mechanical — no scope-superset, role, or visibility policy,
-which stay in your app.
-
 ## Scope conventions
 
 The package ships common MCP-style scope strings as conventions:
@@ -227,6 +257,9 @@ client can retry.
 - Use HTTPS for HTTP MCP servers.
 - Validate token audience/resource identifiers for the exact MCP endpoint.
 - Do not accept access tokens in the URI query string.
+- MCP auth defaults to `bearer_methods: [:header]`. Enable
+  `bearer_methods: [:header, :body]` only if your metadata also advertises body
+  credentials and you accept the logging, retry, and replay risks.
 - Do not pass inbound MCP access tokens through to unrelated upstream services.
 - Keep access tokens short-lived and scoped to the smallest MCP capability that
   can satisfy the request.
