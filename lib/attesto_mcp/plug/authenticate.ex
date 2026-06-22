@@ -126,8 +126,16 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   defp resource_audience_from_path(conn, opts) do
     case Keyword.get(opts, :resource_path) do
-      path when is_binary(path) -> Metadata.resource_identifier(conn, path, opts)
-      _ -> nil
+      path when is_binary(path) ->
+        Metadata.resource_identifier(conn, path, opts)
+
+      _ ->
+        # Fail closed: the host asked to confine the token to THIS resource's
+        # audience but supplied no resource path to derive it from. Silently
+        # falling back to the global `config.audience` would disable the
+        # confinement the host explicitly requested.
+        raise ArgumentError,
+              "resource_audience: :resource requires a :resource / :resource_path option to derive the audience"
     end
   end
 
