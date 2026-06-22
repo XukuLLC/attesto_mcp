@@ -91,6 +91,41 @@ It intentionally avoids a hard dependency on a specific Elixir MCP SDK. Anubis
 gets a bridge because its frame authorization contract is widely used and small
 to support; the core auth boundary remains a normal Plug boundary.
 
+### Per-resource audience confinement (RFC 8707 + RFC 9728)
+
+A protected resource advertises its own identifier as the RFC 9728 metadata
+`resource`; a spec-correct client echoes that identifier back as the RFC 8707
+`resource` parameter at the token endpoint, and the authorization server mints
+the token's `aud` to it (see `attesto`/`attesto_phoenix`). The resource server's
+job is the last link: validate that the presented token's `aud` is *this*
+resource, so a token minted for a sibling endpoint cannot be replayed here.
+
+`ProtectResource` / `Plug.Authenticate` enforce that with `resource_audience`:
+
+```elixir
+plug AttestoMCP.Plug.ProtectResource,
+  config: &MyApp.Attesto.config/0,
+  resource: "/mcp",
+  base_url: "https://mcp.example.com",   # pin the origin behind a proxy
+  resource_audience: :resource,          # validate aud == this resource's identifier
+  scopes: [AttestoMCP.Scopes.tools_call()]
+```
+
+`resource_audience: :resource` validates the token's `aud` against this
+endpoint's identifier (`base_url` + `resource` path) instead of the host's
+global `config.audience`. That identifier is computed by the same
+`AttestoMCP.Metadata.resource_identifier/3` that produces the advertised
+metadata `resource`, so the chain — `metadata.resource` == requested `resource`
+== minted `aud` == validated `aud` — holds by construction. You can also pass a
+literal string or a `(conn -> uri)` / `{m, f}` callback.
+
+Pin the origin with `:base_url` when you enable this behind a TLS-terminating
+proxy: the identifier is otherwise derived from the live request origin
+(`Host` / forwarded headers), which an attacker could spoof to a sibling
+resource's identifier. `resource_audience` is opt-in so existing single-audience
+deployments are unaffected; enabling it (with a pinned origin) is the
+recommended wiring for any server that fronts more than one MCP resource.
+
 ## What this package is not
 
 `attesto_mcp` does not implement MCP, JSON-RPC, tools, prompts, resources,
@@ -255,7 +290,10 @@ client can retry.
 ## Security notes
 
 - Use HTTPS for HTTP MCP servers.
-- Validate token audience/resource identifiers for the exact MCP endpoint.
+- Validate token audience/resource identifiers for the exact MCP endpoint. When
+  one server fronts more than one resource, enable `resource_audience: :resource`
+  with a pinned `:base_url` so a token minted for a sibling resource is rejected
+  (see "Per-resource audience confinement" above).
 - Do not accept access tokens in the URI query string.
 - MCP auth defaults to `bearer_methods: [:header]`. Enable
   `bearer_methods: [:header, :body]` only if your metadata also advertises body
