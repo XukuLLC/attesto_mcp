@@ -13,6 +13,18 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (`[acr_values: [...], max_age: ...]`); after the token is verified its
   `acr` / `auth_time` claims must satisfy it or the request is refused 401
   `insufficient_user_authentication` naming what the client must re-request.
+- `attesto_mcp_protected_resource_metadata/2` accepts `root: true | false` to
+  control the unsuffixed RFC 9728 root compatibility document explicitly.
+
+### Changed
+
+- The root `/.well-known/oauth-protected-resource` compatibility document is now
+  auto-mounted only for a **single-resource** router. Once more than one
+  resource is declared its resource is ambiguous, so the host must choose with
+  `root: true` (nominate the resource) or `root: false` (serve no root); a second
+  resource that leaves the root implicit is a compile error. Previously the root
+  silently resolved to whichever resource was declared first, which could publish
+  a sensitive resource's metadata at a guessable path by accident.
 
 ## [0.9.0] - 2026-06-22
 

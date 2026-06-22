@@ -24,7 +24,11 @@ defmodule AttestoMCP.RouterTest do
     scope "/" do
       pipe_through :api
 
-      attesto_mcp_protected_resource_metadata "/mcp/foo", scopes: [Scopes.server("foo", :tools_call)]
+      # More than one resource, so the root document must be claimed explicitly.
+      attesto_mcp_protected_resource_metadata "/mcp/foo",
+        scopes: [Scopes.server("foo", :tools_call)],
+        root: true
+
       attesto_mcp_protected_resource_metadata "/mcp/bar", scopes: [Scopes.server("bar", :tools_call)]
 
       attesto_mcp_protected_resource_metadata "/mcp/pinned",
@@ -55,7 +59,7 @@ defmodule AttestoMCP.RouterTest do
     assert bar["scopes_supported"] == [Scopes.server("bar", :tools_call)]
   end
 
-  test "the root compatibility route resolves to the first declared resource" do
+  test "the root compatibility route resolves to the resource that claimed root: true" do
     metadata = get_metadata("/.well-known/oauth-protected-resource")
 
     assert metadata["resource"] == "https://mcp.example.com/mcp/foo"
