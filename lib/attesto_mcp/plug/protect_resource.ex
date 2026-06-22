@@ -38,6 +38,14 @@ defmodule AttestoMCP.Plug.ProtectResource do
 
     * `:scopes` (or `:scope`) - the scope(s) the route requires, forwarded to
       `AttestoMCP.Plug.RequireScopes`. At least one scope is required.
+    * `:step_up` - an optional RFC 9470 step-up requirement for the route
+      (`[acr_values: ["phr"], max_age: 300]` or an
+      `%Attesto.StepUp.Requirement{}`). After the token is verified, its
+      `acr` / `auth_time` claims must satisfy the requirement or the request is
+      refused 401 `insufficient_user_authentication`, naming the `acr_values` /
+      `max_age` the client must re-request at the authorization endpoint. A
+      token from a machine grant (no `auth_time`) always challenges a freshness
+      requirement, so step-up routes are for end-user grants.
     * `:resource` (or `:resource_path`) - the MCP endpoint path, for example
       `"/mcp"` or `"/mcp/brokers"`. It drives the RFC 9728 `resource_metadata`
       auth-param appended to `WWW-Authenticate` challenges, derived from the

@@ -85,6 +85,37 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     end
   end
 
+  describe "RFC 9470 step-up (:step_up passthrough)" do
+    test "a token meeting the acr requirement is admitted", %{config: config} do
+      now = System.system_time(:second)
+      token = Factory.access_token(config, scopes: [Scopes.tools_call()], acr: "phr", auth_time: now)
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config, scopes: [Scopes.tools_call()], step_up: [acr_values: ["phr"], max_age: 300])
+
+      refute conn.halted
+    end
+
+    test "an acr-less token is challenged with insufficient_user_authentication", %{config: config} do
+      token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config, scopes: [Scopes.tools_call()], step_up: [acr_values: ["phr"]])
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "insufficient_user_authentication"
+      [challenge] = Plug.Conn.get_resp_header(conn, "www-authenticate")
+      assert challenge =~ ~s(acr_values="phr")
+    end
+  end
+
   test "form-body access_token is rejected by default", %{config: config} do
     token = Factory.access_token(config, scopes: [Scopes.tools_call()])
 

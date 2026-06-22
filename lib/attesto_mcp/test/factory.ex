@@ -76,7 +76,7 @@ if Code.ensure_loaded?(ExUnit.Callbacks) do
         Token.mint(
           config,
           principal,
-          Keyword.take(opts, [:dpop_jkt, :mtls_cert_thumbprint])
+          Keyword.take(opts, [:dpop_jkt, :mtls_cert_thumbprint, :acr, :auth_time])
         )
 
       token.access_token
