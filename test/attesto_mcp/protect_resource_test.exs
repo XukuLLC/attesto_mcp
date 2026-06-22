@@ -28,6 +28,63 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     assert conn.assigns.attesto_mcp_scopes == [Scopes.tools_call()]
   end
 
+  describe "RFC 8707 / RFC 9728 per-resource audience confinement" do
+    test "accepts a token audienced to this resource's identifier", %{config: config} do
+      # config.audience is "https://mcp.example.com/mcp"; pinning the origin makes
+      # the derived resource identifier equal it.
+      token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config,
+          scopes: [Scopes.tools_call()],
+          resource: "/mcp",
+          base_url: "https://mcp.example.com",
+          resource_audience: :resource
+        )
+
+      refute conn.halted
+      assert conn.assigns.attesto_mcp_claims["sub"] == "usr_123"
+    end
+
+    test "rejects a token audienced to a sibling resource", %{config: config} do
+      # A token minted for a DIFFERENT resource than the one this plug guards.
+      sibling = %{config | audience: "https://mcp.example.com/admin"}
+      token = Factory.access_token(sibling, scopes: [Scopes.tools_call()])
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config,
+          scopes: [Scopes.tools_call()],
+          resource: "/mcp",
+          base_url: "https://mcp.example.com",
+          resource_audience: :resource
+        )
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    end
+
+    test "without :resource_audience the host's global config.audience is used", %{config: config} do
+      # Backward compatible: a token audienced to the global config.audience is
+      # accepted (no per-resource override).
+      token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config, scopes: [Scopes.tools_call()], resource: "/mcp")
+
+      refute conn.halted
+    end
+  end
+
   test "form-body access_token is rejected by default", %{config: config} do
     token = Factory.access_token(config, scopes: [Scopes.tools_call()])
 

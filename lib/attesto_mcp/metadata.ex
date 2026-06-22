@@ -180,6 +180,23 @@ defmodule AttestoMCP.Metadata do
   end
 
   @doc """
+  The canonical RFC 8707 / RFC 9728 resource identifier for this protected
+  resource: the resolved origin joined with the resource path (for example
+  `"https://mcp.example.com/mcp"`).
+
+  This is the SINGLE source for the value that must agree across the chain — the
+  RFC 9728 metadata `resource` field, the RFC 8707 `resource` a client requests,
+  the `aud` the authorization server mints, and the audience the resource-server
+  plug validates. Driving the audience check and the advertised metadata from
+  this one function is what makes them consistent by construction (a host cannot
+  configure them into disagreement). Origin precedence is `resolve_origin/2`'s.
+  """
+  @spec resource_identifier(Plug.Conn.t(), String.t(), keyword()) :: String.t()
+  def resource_identifier(%Plug.Conn{} = conn, resource_path, opts \\ []) when is_binary(resource_path) do
+    resolve_origin(conn, opts) <> normalize_path(resource_path)
+  end
+
+  @doc """
   Build the `WWW-Authenticate` auth-param value for RFC 9728 metadata discovery.
   """
   @spec resource_metadata_param(String.t()) :: String.t()

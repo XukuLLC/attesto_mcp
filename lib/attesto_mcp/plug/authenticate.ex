@@ -63,6 +63,7 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   import Plug.Conn
 
+  alias Attesto.Config
   alias Attesto.Plug.Authenticate, as: AttestoAuthenticate
   alias Attesto.Plug.OAuthError
   alias AttestoMCP.Metadata
@@ -85,12 +86,57 @@ defmodule AttestoMCP.Plug.Authenticate do
 
     conn =
       conn
-      |> AttestoAuthenticate.call(core_opts(opts, claims_key))
+      |> AttestoAuthenticate.call(core_opts(opts, claims_key) |> override_resource_audience(conn, opts))
 
     if conn.halted do
       conn
     else
       assign_context(conn, opts, claims_key)
+    end
+  end
+
+  # RFC 8707 / RFC 9728: enforce that the access token is audienced to THIS
+  # protected resource. When `:resource_audience` is set, the token's `aud` is
+  # validated against this resource's identifier (the same value advertised as
+  # the RFC 9728 metadata `resource`) rather than the host's global
+  # `config.audience` - so a token minted for a sibling resource is rejected here
+  # (audience confinement, RFC 8707 §1). Computed per request because the
+  # resource identifier honors the live / pinned origin; absent, the host config
+  # audience is used unchanged (backward compatible).
+  defp override_resource_audience(core, conn, opts) do
+    case resource_audience(conn, opts) do
+      nil -> core
+      audience -> Keyword.put(core, :config, %{resolve_config(core) | audience: audience})
+    end
+  end
+
+  defp resource_audience(conn, opts) do
+    case Keyword.get(opts, :resource_audience) do
+      nil -> nil
+      false -> nil
+      # `:resource` derives the identifier from the configured `:resource_path`
+      # and the resolved origin - the canonical metadata `resource` value.
+      :resource -> resource_audience_from_path(conn, opts)
+      value when is_binary(value) -> value
+      fun when is_function(fun, 1) -> fun.(conn)
+      {m, f} when is_atom(m) and is_atom(f) -> apply(m, f, [conn])
+      {m, f, a} when is_atom(m) and is_atom(f) and is_list(a) -> apply(m, f, [conn | a])
+    end
+  end
+
+  defp resource_audience_from_path(conn, opts) do
+    case Keyword.get(opts, :resource_path) do
+      path when is_binary(path) -> Metadata.resource_identifier(conn, path, opts)
+      _ -> nil
+    end
+  end
+
+  defp resolve_config(core) do
+    case Keyword.fetch!(core, :config) do
+      %Config{} = config -> config
+      fun when is_function(fun, 0) -> fun.()
+      {m, f} when is_atom(m) and is_atom(f) -> apply(m, f, [])
+      {m, f, a} when is_atom(m) and is_atom(f) and is_list(a) -> apply(m, f, a)
     end
   end
 
