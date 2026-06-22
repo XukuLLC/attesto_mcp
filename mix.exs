@@ -8,7 +8,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "0.8.0"
+  @version "0.9.0"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -90,7 +90,7 @@ defmodule AttestoMCP.MixProject do
     if System.get_env("ATTESTO_PATH") in ~w(1 true) and File.dir?("../attesto") do
       {:attesto, path: "../attesto", override: true}
     else
-      {:attesto, "~> 0.9"}
+      {:attesto, "~> 0.10"}
     end
   end
 

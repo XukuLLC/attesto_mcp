@@ -6,6 +6,26 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-06-22
+
+### Added
+
+- **RFC 8707 / RFC 9728 per-resource audience confinement.**
+  `AttestoMCP.Plug.ProtectResource` / `Plug.Authenticate` gain a
+  `:resource_audience` option: with `:resource` (or a string / `(conn -> uri)` /
+  `{m, f}` value) the access token's `aud` is validated against THIS resource's
+  identifier rather than the host's global `config.audience`, so a token minted
+  for a sibling resource is rejected (audience confinement, RFC 8707 §1).
+- `AttestoMCP.Metadata.resource_identifier/3` — the single canonical
+  origin-plus-path identifier shared by the advertised metadata `resource` and
+  the validated audience, so `metadata.resource == requested resource == minted
+  aud == validated aud` holds by construction.
+
+### Changed
+
+- Requires `attesto ~> 0.10`. `:resource_audience: :resource` raises (fails
+  closed) when no resource path is configured to derive the identifier from.
+
 ## [0.8.0] - 2026-06-21
 
 ### Changed
