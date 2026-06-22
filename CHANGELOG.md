@@ -6,6 +6,14 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **RFC 9470 Step-Up Authentication.** `AttestoMCP.Plug.ProtectResource` /
+  `Plug.Authenticate` accept a per-route `:step_up` requirement
+  (`[acr_values: [...], max_age: ...]`); after the token is verified its
+  `acr` / `auth_time` claims must satisfy it or the request is refused 401
+  `insufficient_user_authentication` naming what the client must re-request.
+
 ## [0.9.0] - 2026-06-22
 
 ### Added
