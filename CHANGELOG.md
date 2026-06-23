@@ -4,6 +4,36 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.11.0] - 2026-06-23
+
+### Added
+
+- **Clustered + persistent Anubis MCP session infrastructure** (optional,
+  compile-guarded — an RS-only consumer pays nothing):
+  - `AttestoMCP.Anubis.SessionStore.Ecto` — a Postgres-backed
+    `Anubis.Server.Session.Store`. Anubis ships only a Redis adapter; this
+    persists the session map (keyed by `Mcp-Session-Id`) so a client reconnects
+    after a deploy/node-replacement with its initialized state restored instead
+    of re-initializing. Stateless (`start_link/1` is `:ignore`, rides the host
+    repo), with lazy + scheduled (`cleanup_expired/1`) TTL reaping. Backed by the
+    `AttestoMCP.Anubis.Session` schema; `mix attesto_mcp.gen.session_migration`
+    creates the `attesto_mcp_sessions` table. Compile-guarded on `Ecto.Schema`.
+  - `AttestoMCP.Anubis.JSONSafe.sanitize/1` — strips non-JSON-encodable values
+    (bare structs, pids, refs, tuples, functions) from session state before the
+    `jsonb` insert, since Anubis folds the whole request `assigns` into the
+    persisted frame; without it the driver raises mid-`initialize` and kills the
+    session process.
+  - `AttestoMCP.Anubis.Registry.Horde` — a cluster-wide `Anubis.Server.Registry`
+    that keeps the client-supplied `session_id` as CRDT/ETS data (a `:via`
+    tuple), closing the **atom-table-exhaustion DoS** in the bundled `:pg`
+    adapter (which derives a never-GC'd atom per session id), and routes a
+    request landing on any node to the node holding the session. Compile-guarded
+    on `Horde.Registry`.
+  - `mix attesto_mcp.install.sessions` — an Igniter installer that writes the
+    `config :anubis_mcp, :session_store` block (and, with `--registry`, adds the
+    `horde` dependency), and prints next-step notices for the migration and the
+    supervision-tree registry wiring.
+
 ## [0.10.0] - 2026-06-22
 
 ### Added

@@ -2,13 +2,16 @@ defmodule AttestoMCP.MixProject do
   @moduledoc false
   use Mix.Project
 
+  alias AttestoMCP.Anubis.JSONSafe
+  alias AttestoMCP.Anubis.Registry.Horde
+  alias AttestoMCP.Anubis.Session
   alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Plug.ProtectResource
   alias AttestoMCP.Plug.RequireScopes
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "0.10.0"
+  @version "0.11.0"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -63,6 +66,24 @@ defmodule AttestoMCP.MixProject do
       # here (not `only:`) so it is loadable when attesto_mcp builds the bridge
       # and its tests.
       {:anubis_mcp, "~> 1.6", optional: true},
+
+      # Optional: only needed by `AttestoMCP.Anubis.SessionStore.Ecto` (and its
+      # `AttestoMCP.Anubis.Session` schema), a Postgres-backed
+      # `Anubis.Server.Session.Store` adapter. The modules are compile-guarded on
+      # `Ecto.Schema`, so a consumer that does not persist MCP sessions never
+      # compiles them and never pulls Ecto into its closure.
+      {:ecto, "~> 3.10", optional: true},
+
+      # Optional: only needed by `AttestoMCP.Anubis.Registry.Horde`, a
+      # cluster-wide `Anubis.Server.Registry` adapter. Compile-guarded on
+      # `Horde.Registry`, so a single-node consumer never compiles it.
+      {:horde, "~> 0.9", optional: true},
+
+      # test-only: the Ecto session-store adapter's behaviour-conformance tests
+      # run against a real Postgres repo (`AttestoMCP.TestRepo`); a consumer's
+      # own host application supplies `ecto_sql` + a driver.
+      {:ecto_sql, "~> 3.10", only: :test},
+      {:postgrex, ">= 0.0.0", only: :test},
 
       # test-only: the `mix attesto_mcp.install` tests drive a synthetic Phoenix
       # project via `Igniter.Test.phx_test_project/1`, which needs igniter's
@@ -129,6 +150,13 @@ defmodule AttestoMCP.MixProject do
         Routing: [AttestoMCP.Router, AttestoMCP.MetadataController],
         Metadata: [AttestoMCP.Metadata],
         Scopes: [AttestoMCP.Scopes],
+        Anubis: [
+          AttestoMCP.Anubis,
+          AttestoMCP.Anubis.SessionStore.Ecto,
+          Session,
+          Horde,
+          JSONSafe
+        ],
         Testing: [DPoPReplay, DPoPAssertions]
       ]
     ]

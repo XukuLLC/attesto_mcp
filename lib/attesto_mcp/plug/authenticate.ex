@@ -117,12 +117,19 @@ defmodule AttestoMCP.Plug.Authenticate do
       # `:resource` derives the identifier from the configured `:resource_path`
       # and the resolved origin - the canonical metadata `resource` value.
       :resource -> resource_audience_from_path(conn, opts)
-      value when is_binary(value) -> value
-      fun when is_function(fun, 1) -> fun.(conn)
-      {m, f} when is_atom(m) and is_atom(f) -> apply(m, f, [conn])
-      {m, f, a} when is_atom(m) and is_atom(f) and is_list(a) -> apply(m, f, [conn | a])
+      # A literal audience, or a `(conn -> audience)` callback in fun / {m,f} /
+      # {m,f,a} form.
+      other -> invoke_resource_audience(other, conn)
     end
   end
+
+  defp invoke_resource_audience(value, _conn) when is_binary(value), do: value
+  defp invoke_resource_audience(fun, conn) when is_function(fun, 1), do: fun.(conn)
+
+  defp invoke_resource_audience({m, f}, conn) when is_atom(m) and is_atom(f), do: apply(m, f, [conn])
+
+  defp invoke_resource_audience({m, f, a}, conn) when is_atom(m) and is_atom(f) and is_list(a),
+    do: apply(m, f, [conn | a])
 
   defp resource_audience_from_path(conn, opts) do
     case Keyword.get(opts, :resource_path) do

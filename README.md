@@ -72,6 +72,22 @@ visibility policy; keep that in your app.
 `anubis_mcp` is optional. The bridge module compiles only when Anubis is
 present, so non-Anubis MCP servers do not take a hard dependency on it.
 
+### Clustered or persistent sessions (optional)
+
+If you run Anubis across multiple nodes, or want MCP sessions to survive a
+deploy, two optional adapters fill gaps in Anubis's bundled options (both
+compile-guarded, so an RS-only consumer pulls in neither):
+
+- `AttestoMCP.Anubis.SessionStore.Ecto` — a Postgres-backed
+  `Anubis.Server.Session.Store` (Anubis ships only Redis), so a client
+  reconnects after a node replacement with its initialized state restored. Wire
+  it with `mix attesto_mcp.install.sessions`.
+- `AttestoMCP.Anubis.Registry.Horde` — a cluster-wide `Anubis.Server.Registry`
+  that routes a request to the node holding the session and closes the
+  atom-exhaustion DoS in the bundled `:pg` adapter.
+
+See each module's docs for wiring details.
+
 ## MCP authorization and metadata
 
 The MCP authorization spec treats a protected HTTP MCP server as an OAuth
