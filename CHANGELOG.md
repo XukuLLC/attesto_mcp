@@ -4,6 +4,16 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-07-08
+
+### Changed
+
+- Requires `attesto ~> 1.2`, picking up the 1.2.x line — including the
+  `Attesto.Keystore.Static` fix that labels the signing key's `kid` from
+  `:signing_alg` (attesto 1.2.1), so a PS256-signing host verifies its own
+  tokens without a redundant `:key_algs` entry. No functional change in
+  attesto_mcp itself.
+
 ## [1.0.0] - 2026-07-04
 
 First stable release; the public API is now under semantic versioning. No

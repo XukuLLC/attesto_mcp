@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "1.0.0"
+  @version "1.0.1"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -103,16 +103,17 @@ defmodule AttestoMCP.MixProject do
   # via `ATTESTO_PATH=1` (and the checkout exists); otherwise the published Hex
   # package. This is gated on the env var, not just `File.dir?`, so `mix
   # hex.publish` (which runs in :dev with the sibling on disk) resolves the Hex
-  # constraint rather than a path dep, which cannot be packaged. The
-  # This branch depends on attesto 0.11 for RFC 9470 step-up (the `:step_up`
-  # plug option + `Attesto.Plug.OAuthError.insufficient_user_authentication/4`)
-  # and the `Attesto.Plug.{OAuthError,RequireScopes}` transport hooks this MCP
-  # layer delegates to.
+  # constraint rather than a path dep, which cannot be packaged. Requires
+  # attesto 1.2 for the Static keystore signing_alg/kid labelling fix, plus RFC
+  # 9470 step-up (the `:step_up` plug option +
+  # `Attesto.Plug.OAuthError.insufficient_user_authentication/4`) and the
+  # `Attesto.Plug.{OAuthError,RequireScopes}` transport hooks this MCP layer
+  # delegates to.
   defp attesto_dep do
     if System.get_env("ATTESTO_PATH") in ~w(1 true) and File.dir?("../attesto") do
       {:attesto, path: "../attesto", override: true}
     else
-      {:attesto, "~> 1.0"}
+      {:attesto, "~> 1.2"}
     end
   end
 
