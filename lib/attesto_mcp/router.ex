@@ -78,6 +78,26 @@ defmodule AttestoMCP.Router do
   `AttestoMCP.Plug.ProtectResource` accepts the same `:base_url`/`:origin`, so
   the challenge URL and the served metadata stay aligned. See
   `guides/proxy_origin.md`.
+
+  ## Combined AS+RS hosts (attesto_phoenix in the same app)
+
+  A host that also mounts `attesto_phoenix`'s
+  `AttestoPhoenix.Router.attesto_routes/1` already serves a root
+  `/.well-known/oauth-protected-resource` document. Pick ONE owner per PRM
+  route:
+
+    * Single resource, AS and RS in one app: prefer
+      `attesto_routes(protected_resource_paths: ["/mcp"])` over this macro -
+      it mounts both the root and the path-inserted form from the same
+      controller, with the RFC 9728 §3.3 `resource`-consistency guard.
+    * Standalone RS, or multiple resources: use this macro. If the AS half
+      also runs in the same app, pass `root: false` here or
+      `protected_resource_root: false` to `attesto_routes` so the root
+      document has exactly one owner.
+
+  Phoenix's duplicate-route behavior (first match wins, with a compile
+  warning) is only the backstop - mounting the same well-known path from both
+  packages is a wiring smell, not a supported configuration.
   """
 
   @doc false

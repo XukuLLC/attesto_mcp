@@ -266,6 +266,20 @@ AttestoMCP.Metadata.authorization_server(config,
 )
 ```
 
+How discovery actually happens: a client hits the resource URL, gets a 401
+whose `WWW-Authenticate` challenge carries a `resource_metadata` pointer
+(RFC 9728 §5.1) — and modern MCP clients also (often first) derive the §3.1
+**path-inserted** well-known URI from the resource URL itself
+(`https://host.example/mcp` → `/.well-known/oauth-protected-resource/mcp`).
+Both forms must serve the same document, whose `resource` member equals the
+identifier the URI was derived from (§3.3). The router macro above mounts
+both. For a combined AS+RS app that already mounts `attesto_phoenix`'s
+`attesto_routes` (which serves the root document), give each PRM route exactly
+one owner: single-resource hosts can use
+`attesto_routes(protected_resource_paths: ["/mcp"])` instead of this macro,
+and hosts using this macro alongside `attesto_routes` should pass `root:
+false` here or `protected_resource_root: false` there.
+
 Dynamic client registration should be exposed by the authorization server. When
 using `attesto_phoenix`, enable its registration route and callbacks there. Only
 advertise registration response fields such as `client_secret_expires_at`,
