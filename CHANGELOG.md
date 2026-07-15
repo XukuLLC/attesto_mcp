@@ -15,6 +15,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   metadata, requested resources, token audiences, and validated audiences stay
   aligned. Its notice now calls out request-derived origins and reverse-proxy
   pinning.
+- The installer now rejects empty scopes and degenerate resource paths, and
+  stops safely when an existing metadata declaration uses a non-literal path
+  that cannot be compared without evaluating host code.
+- Multi-resource routers now reject a later `root: false` declaration when an
+  earlier resource already auto-mounted the compatibility root, closing the
+  remaining declaration-order-dependent root case.
 
 ### Documentation
 

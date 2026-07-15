@@ -68,8 +68,10 @@ end
 
 Serving more than one MCP server is one call per resource. Each gets its own
 metadata document and scope list. A shared root cannot identify all of them, so
-the macro never assigns it by declaration order: a second implicit resource is
-a compile-time error. Either serve no root document:
+the macro never allows an implicitly assigned root to survive after another
+resource is declared. If the first declaration used the single-resource
+default, adding a second resource is a compile-time error until the first makes
+its root choice explicit. Either serve no root document:
 
 ```elixir
 attesto_mcp_protected_resource_metadata "/mcp/foo",

@@ -169,6 +169,28 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
       end)
     end
 
+    test "rejects degenerate resource paths before changing the router" do
+      for path <- ["", "/", "/mcp/../admin", "/mcp?tenant=one"] do
+        argv = ["--resource-path", path, "--scopes", "mcp:use", "--router", "TestWeb.Router"]
+
+        assert_raise Mix.Error, ~r/--resource-path/, fn ->
+          phx_test_project()
+          |> Igniter.compose_task("attesto_mcp.install", argv)
+        end
+      end
+    end
+
+    test "rejects an empty scope list before changing the router" do
+      for scopes <- ["", ",", " , "] do
+        argv = ["--resource-path", "/mcp", "--scopes", scopes, "--router", "TestWeb.Router"]
+
+        assert_raise Mix.Error, ~r/at least one OAuth scope/, fn ->
+          phx_test_project()
+          |> Igniter.compose_task("attesto_mcp.install", argv)
+        end
+      end
+    end
+
     test "legacy raw metadata routes stop without changing the router" do
       seeded =
         phx_test_project()
@@ -231,6 +253,31 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
       conflicted = Igniter.compose_task(seeded, "attesto_mcp.install", @beta_argv)
 
       assert_has_issue(conflicted, &(&1 =~ "implicit single-resource root"))
+      assert router_source(conflicted) == before
+    end
+
+    test "a non-literal metadata path stops instead of adding a duplicate route" do
+      seeded =
+        phx_test_project()
+        |> replace_router_source("""
+        defmodule TestWeb.Router do
+          use TestWeb, :router
+          use AttestoMCP.Router
+
+          @resource_path "/mcp"
+
+          scope "/" do
+            attesto_mcp_protected_resource_metadata @resource_path,
+              scopes: ["mcp:use"],
+              root: false
+          end
+        end
+        """)
+
+      before = router_source(seeded)
+      conflicted = Igniter.compose_task(seeded, "attesto_mcp.install", @argv)
+
+      assert_has_issue(conflicted, &(&1 =~ "resource path is not a literal string"))
       assert router_source(conflicted) == before
     end
 

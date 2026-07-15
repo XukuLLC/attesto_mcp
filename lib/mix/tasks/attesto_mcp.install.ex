@@ -78,6 +78,7 @@ if Code.ensure_loaded?(Igniter) do
     alias Igniter.Code.Function
     alias Igniter.Code.Keyword, as: CodeKeyword
     alias Igniter.Code.Module, as: CodeModule
+    alias Igniter.Code.String, as: CodeString
     alias Igniter.Libs.Phoenix
     alias Igniter.Mix.Task.Info
     alias Igniter.Project.Module, as: ProjectModule
@@ -100,7 +101,7 @@ if Code.ensure_loaded?(Igniter) do
     def igniter(igniter) do
       options = igniter.args.options
       resource_path = normalize_resource_path(options[:resource_path] || @default_resource_path)
-      scopes = parse_scopes(options[:scopes] || @default_scopes)
+      scopes = options[:scopes] |> Kernel.||(@default_scopes) |> parse_scopes!()
       router = resolve_router(igniter, options)
       pipeline_name = pipeline_name(resource_path)
 
@@ -207,6 +208,9 @@ if Code.ensure_loaded?(Igniter) do
 
         implicit_root_declaration?(zipper) ->
           {:conflict, implicit_root_issue(resource_path)}
+
+        non_literal_metadata_declaration?(zipper) ->
+          {:conflict, non_literal_metadata_issue(resource_path)}
 
         metadata_declaration?(zipper, resource_path) ->
           declared_installation_state(zipper, pipeline_name, resource_path, scopes)
@@ -410,6 +414,24 @@ if Code.ensure_loaded?(Igniter) do
         end)
     end
 
+    defp non_literal_metadata_declaration?(zipper) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(
+          zipper,
+          :attesto_mcp_protected_resource_metadata,
+          [1, 2],
+          fn declaration ->
+            Function.argument_matches_predicate?(
+              declaration,
+              0,
+              &(not CodeString.string?(&1))
+            )
+          end
+        )
+      )
+    end
+
     defp legacy_route_issue(resource_path) do
       """
       attesto_mcp.install found legacy raw AttestoMCP.MetadataController routes before installing
@@ -432,12 +454,22 @@ if Code.ensure_loaded?(Igniter) do
       """
     end
 
+    defp non_literal_metadata_issue(resource_path) do
+      """
+      attesto_mcp.install found an existing protected-resource metadata declaration whose
+      resource path is not a literal string while installing #{inspect(resource_path)}, so it
+      cannot safely determine whether that declaration already owns the target route. No router
+      changes were made. Replace the declaration's module attribute or other expression with a
+      literal path, then rerun the installer; alternatively complete the resource wiring manually.
+      """
+    end
+
     defp partial_installation_issue(resource_path, scopes) do
       """
-      attesto_mcp.install found an existing declaration for #{inspect(resource_path)}, but it
-      does not match a complete audience-confined scaffold for scopes #{inspect(scopes)}, so no
-      router changes were made. Ensure the declaration uses those scopes and an explicit boolean
-      `root` option, its ProtectResource pipeline uses the same scopes plus
+      attesto_mcp.install found existing wiring for #{inspect(resource_path)}, but it does not
+      match a complete audience-confined scaffold for scopes #{inspect(scopes)}, so no router
+      changes were made. Ensure the metadata declaration uses those scopes and an explicit
+      boolean `root` option, its ProtectResource pipeline uses the same scopes plus
       `resource: #{inspect(resource_path)}` and `resource_audience: :resource`, and the resource
       scope pipes through that pipeline. Alternatively remove the partial wiring and rerun the
       installer.
@@ -482,16 +514,36 @@ if Code.ensure_loaded?(Igniter) do
       end
     end
 
-    # RFC 9728 Section 3.1 keys metadata off the resource path component; the
-    # leading slash is required for the well-known suffix and the protected scope.
-    defp normalize_resource_path("/" <> _ = path), do: path
-    defp normalize_resource_path(path), do: "/" <> path
+    # RFC 9728 Section 3.1 keys metadata off a non-empty plain resource path.
+    # Validate before Igniter edits anything so a typo cannot widen the protected
+    # scope to `/` or generate an unreachable well-known route.
+    defp normalize_resource_path(path) do
+      normalized = if String.starts_with?(path, "/"), do: path, else: "/" <> path
 
-    defp parse_scopes(scopes) do
-      scopes
-      |> String.split(",", trim: true)
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
+      cond do
+        normalized == "/" ->
+          Mix.raise("--resource-path must name a non-root resource path, for example /mcp")
+
+        String.contains?(normalized, "..") or String.contains?(normalized, "?") ->
+          Mix.raise("--resource-path must be a plain path without `..` segments or a query string")
+
+        true ->
+          normalized
+      end
+    end
+
+    defp parse_scopes!(scopes) do
+      parsed =
+        scopes
+        |> String.split(",", trim: true)
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+
+      if parsed == [] do
+        Mix.raise("--scopes must contain at least one OAuth scope")
+      end
+
+      parsed
     end
 
     # Derive a stable, bounded pipeline atom. The readable slug is not unique

@@ -91,6 +91,23 @@ defmodule AttestoMCP.RouterRootMountTest do
       end
     end
 
+    test "root: false cannot preserve an earlier implicit root by declaration order" do
+      assert_raise ArgumentError, ~r/dependent on declaration order/, fn ->
+        defmodule ImplicitThenFalseRouter do
+          use Phoenix.Router
+          use AttestoMCP.Router
+
+          scope "/" do
+            attesto_mcp_protected_resource_metadata "/mcp/a", scopes: ["a:mcp:tools:call"]
+
+            attesto_mcp_protected_resource_metadata "/mcp/b",
+              scopes: ["b:mcp:tools:call"],
+              root: false
+          end
+        end
+      end
+    end
+
     test "two resources both claiming root: true raises" do
       assert_raise ArgumentError, ~r/only one resource may answer/, fn ->
         defmodule DoubleRootRouter do
