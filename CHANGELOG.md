@@ -4,6 +4,23 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+- `mix attesto_mcp.install` now emits the public protected-resource metadata
+  macro with an explicit safe `root: false`, makes real repeated installs
+  idempotent, keeps distinct resource paths on collision-resistant protection
+  pipelines, and generates `resource:` plus `resource_audience: :resource` so
+  metadata, requested resources, token audiences, and validated audiences stay
+  aligned. Its notice now calls out request-derived origins and reverse-proxy
+  pinning.
+
+### Documentation
+
+- Corrected multi-resource root ownership and added the combined
+  `attesto_phoenix` authorization-server plus multiple MCP resource pattern.
+
 ## [1.0.2] - 2026-07-13
 
 ### Changed

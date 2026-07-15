@@ -32,6 +32,22 @@ defmodule AttestoMCP.RouterRootMountTest do
     end
   end
 
+  defmodule LaterRootOwnerRouter do
+    @moduledoc false
+    use Phoenix.Router
+    use AttestoMCP.Router
+
+    scope "/" do
+      attesto_mcp_protected_resource_metadata "/mcp/first",
+        scopes: ["first:mcp:tools:call"],
+        root: false
+
+      attesto_mcp_protected_resource_metadata "/mcp/second",
+        scopes: ["second:mcp:tools:call"],
+        root: true
+    end
+  end
+
   describe "single resource" do
     test "auto-mounts the root document for the sole resource" do
       assert status(SingleRouter, "/.well-known/oauth-protected-resource") == 200
@@ -48,6 +64,15 @@ defmodule AttestoMCP.RouterRootMountTest do
       assert_raise NoRouteError, fn ->
         status(NoRootRouter, "/.well-known/oauth-protected-resource")
       end
+    end
+  end
+
+  describe "explicit root ownership" do
+    test "a later declaration owns the root only when it explicitly claims it" do
+      metadata = metadata(LaterRootOwnerRouter, "/.well-known/oauth-protected-resource")
+
+      assert metadata["resource"] == "https://mcp.example.com/mcp/second"
+      assert metadata["scopes_supported"] == ["second:mcp:tools:call"]
     end
   end
 
@@ -82,12 +107,21 @@ defmodule AttestoMCP.RouterRootMountTest do
   end
 
   defp status(router, path) do
-    conn =
-      :get
-      |> conn("https://mcp.example.com" <> path)
-      |> put_req_header("accept", "application/json")
-      |> router.call(router.init([]))
+    router
+    |> response(path)
+    |> Map.fetch!(:status)
+  end
 
-    conn.status
+  defp metadata(router, path) do
+    conn = response(router, path)
+    assert conn.status == 200
+    JSON.decode!(conn.resp_body)
+  end
+
+  defp response(router, path) do
+    :get
+    |> conn("https://mcp.example.com" <> path)
+    |> put_req_header("accept", "application/json")
+    |> router.call(router.init([]))
   end
 end

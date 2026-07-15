@@ -164,7 +164,7 @@ authorization server layer rather than duplicate RFC 7591 here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 0.8"}
+    {:attesto_mcp, "~> 1.0"}
   ]
 end
 ```
@@ -175,6 +175,14 @@ resource metadata route and protecting pipeline:
 ```bash
 mix attesto_mcp.install --resource-path /mcp --scopes mcp:tools:call
 ```
+
+The installer emits the public
+`attesto_mcp_protected_resource_metadata/2` macro with `root: false` and
+generates protection with the same path/scopes plus
+`resource_audience: :resource`. Re-running the same resource is a no-op;
+installing another resource adds another path-inserted metadata document but
+never an ambiguous shared root. If a legacy client needs the unsuffixed root,
+change exactly one declaration to `root: true` explicitly.
 
 For a fuller Phoenix wiring example, see [the MCP wiring guide](guides/mcp_wiring.md).
 
@@ -214,6 +222,8 @@ plug AttestoMCP.Plug.ProtectResource,
   config: &MyApp.Attesto.config/0,
   replay_check: &MyApp.DPoPReplay.check_and_record/2,
   resource: "/mcp",
+  base_url: "https://mcp.example.com",
+  resource_audience: :resource,
   scopes: [AttestoMCP.Scopes.tools_call()]
 ```
 
@@ -271,14 +281,21 @@ whose `WWW-Authenticate` challenge carries a `resource_metadata` pointer
 (RFC 9728 §5.1) — and modern MCP clients also (often first) derive the §3.1
 **path-inserted** well-known URI from the resource URL itself
 (`https://host.example/mcp` → `/.well-known/oauth-protected-resource/mcp`).
-Both forms must serve the same document, whose `resource` member equals the
-identifier the URI was derived from (§3.3). The router macro above mounts
-both. For a combined AS+RS app that already mounts `attesto_phoenix`'s
+The path-inserted form must serve a document whose `resource` member equals the
+identifier the URI was derived from (§3.3). A single-resource router can also
+mount the unsuffixed compatibility document; a multi-resource router must
+either omit it or assign it explicitly, never by declaration order. For a
+combined AS+RS app that already mounts `attesto_phoenix`'s
 `attesto_routes` (which serves the root document), give each PRM route exactly
 one owner: single-resource hosts can use
 `attesto_routes(protected_resource_paths: ["/mcp"])` instead of this macro,
 and hosts using this macro alongside `attesto_routes` should pass `root:
 false` here or `protected_resource_root: false` there.
+
+For the complete combined-host pattern—one authorization-server route set,
+class-specific OAuth pipelines, two MCP metadata declarations, matching
+audience-confined protection, and both RFC 8707 allowed resource identifiers—
+see [the MCP wiring guide](guides/mcp_wiring.md#combined-authorization-server-and-multiple-mcp-resources).
 
 Dynamic client registration should be exposed by the authorization server. When
 using `attesto_phoenix`, enable its registration route and callbacks there. Only
