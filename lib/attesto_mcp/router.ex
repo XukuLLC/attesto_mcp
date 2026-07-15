@@ -42,8 +42,9 @@ defmodule AttestoMCP.Router do
   is NOT auto-mounted once more than one resource exists - its resource would be
   ambiguous, and auto-mounting it to whichever resource was declared first could
   publish a sensitive resource's metadata at a guessable path by accident.
-  Choose explicitly with `:root` (see `attesto_mcp_protected_resource_metadata/2`);
-  a second resource that leaves the root implicit raises a compile error.
+  Choose explicitly with `:root` (see `attesto_mcp_protected_resource_metadata/2`).
+  If the first resource used the single-resource default, adding any second
+  resource raises until the first declaration makes root ownership explicit.
 
       # Serve no root document (each endpoint's WWW-Authenticate already points
       # clients at its own path-suffixed metadata):
@@ -139,11 +140,11 @@ defmodule AttestoMCP.Router do
     * A **single-resource** router auto-mounts the root for its one resource (a
       convenience for the common case).
     * Once **more than one** resource is declared, the root's resource is
-      ambiguous and is NOT mounted implicitly: auto-mounting it to whichever
-      resource happened to be declared first could publish a sensitive
-      resource's metadata at a guessable path by accident. A second declaration
-      that leaves the root implicit raises a compile error telling the host to
-      choose.
+      ambiguous and is NOT allowed to remain implicitly assigned: auto-mounting
+      it to whichever resource happened to be declared first could publish a
+      sensitive resource's metadata at a guessable path by accident. If the
+      first declaration used the default, adding a second resource raises until
+      the first declaration sets `root: true` or `root: false` explicitly.
 
   Set `:root` to control it explicitly:
 
@@ -206,6 +207,16 @@ defmodule AttestoMCP.Router do
   end
 
   defp decide_root(true, _count, _mounted?, _explicit?), do: true
+
+  defp decide_root(false, count, true = _mounted?, false = _explicit?) when count > 1 do
+    raise ArgumentError,
+          "attesto_mcp_protected_resource_metadata: the root " <>
+            "GET /.well-known/oauth-protected-resource document was auto-mounted for an earlier " <>
+            "resource, so adding another resource with root: false would leave root ownership " <>
+            "dependent on declaration order. Set root: true or root: false explicitly on the " <>
+            "earlier resource before adding this declaration."
+  end
+
   defp decide_root(false, _count, _mounted?, _explicit?), do: false
 
   # Single-resource convenience: auto-mount the root for the sole resource.

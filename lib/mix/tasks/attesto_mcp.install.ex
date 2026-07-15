@@ -23,14 +23,22 @@ defmodule Mix.Tasks.AttestoMcp.Install.Docs do
       * The OAuth 2.0 Protected Resource Metadata endpoint (RFC 9728 Section 3),
         mounted from the per-resource well-known path (RFC 9728 Section 3.1) with
         the same route form emitted by
-        `AttestoMCP.Router.attesto_mcp_protected_resource_metadata/2`.
+        `AttestoMCP.Router.attesto_mcp_protected_resource_metadata/2`. The
+        installer emits `root: false`, so multiple installations never create
+        an ambiguous or order-dependent root document; a host may explicitly
+        nominate one resource later if legacy-client compatibility requires it.
       * A Phoenix pipeline that enforces bearer-token authentication and the
         required OAuth scopes (RFC 6750 Bearer Token Usage, RFC 6749 Section 3.3
-        scope semantics) via `AttestoMCP.Plug.ProtectResource`.
+        scope semantics) via `AttestoMCP.Plug.ProtectResource`. The generated
+        protection derives the exact resource audience from the same path as
+        metadata and rejects tokens issued to sibling MCP resources.
 
-    This task is idempotent: re-running it will not duplicate the pipeline or the
-    scopes that a previous run already added. Igniter matches the pipeline by name
-    and the scope by its exact contents, so a second run is a no-op.
+    This task is idempotent per resource path: re-running it recognizes only a
+    complete matching scaffold, so it will not duplicate the pipeline, metadata,
+    or protected scope. Legacy raw metadata routes, implicit root ownership, and
+    partial target wiring produce an actionable issue without changing the router;
+    make root ownership explicit and complete or remove the old scaffold before
+    rerunning the installer.
 
     ## Example
 
@@ -65,8 +73,15 @@ if Code.ensure_loaded?(Igniter) do
 
     use Igniter.Mix.Task
 
+    alias AttestoMCP.Plug.ProtectResource
+    alias Igniter.Code.Common
+    alias Igniter.Code.Function
+    alias Igniter.Code.Keyword, as: CodeKeyword
+    alias Igniter.Code.Module, as: CodeModule
+    alias Igniter.Code.String, as: CodeString
     alias Igniter.Libs.Phoenix
     alias Igniter.Mix.Task.Info
+    alias Igniter.Project.Module, as: ProjectModule
     alias Mix.Tasks.AttestoMcp.Install.Docs
 
     @default_resource_path "/mcp"
@@ -86,51 +101,61 @@ if Code.ensure_loaded?(Igniter) do
     def igniter(igniter) do
       options = igniter.args.options
       resource_path = normalize_resource_path(options[:resource_path] || @default_resource_path)
-      scopes = parse_scopes(options[:scopes] || @default_scopes)
+      scopes = options[:scopes] |> Kernel.||(@default_scopes) |> parse_scopes!()
       router = resolve_router(igniter, options)
       pipeline_name = pipeline_name(resource_path)
 
-      igniter
-      |> add_protect_pipeline(router, pipeline_name, resource_path, scopes)
-      |> add_metadata_scope(router, resource_path, scopes)
-      |> add_protected_scope(router, pipeline_name, resource_path)
-      |> Igniter.add_notice("""
-      AttestoMCP protected resource scaffolded for #{resource_path}.
+      case installation_state(igniter, router, pipeline_name, resource_path, scopes) do
+        {igniter, :installed} ->
+          Igniter.add_notice(
+            igniter,
+            "AttestoMCP protected resource #{resource_path} is already installed; no router changes were made."
+          )
 
-      The host router now mounts the RFC 9728 protected resource metadata
-      endpoint and a #{inspect(pipeline_name)} pipeline that enforces the
-      #{inspect(scopes)} scope(s) via AttestoMCP.Plug.ProtectResource.
+        {igniter, :absent} ->
+          igniter
+          |> ensure_router_use(router)
+          |> add_protect_pipeline(router, pipeline_name, resource_path, scopes)
+          |> add_metadata_scope(router, resource_path, scopes)
+          |> add_protected_scope(router, pipeline_name, resource_path)
+          |> Igniter.add_notice("""
+          AttestoMCP protected resource scaffolded for #{resource_path}.
 
-      Next steps:
+          The host router now mounts the RFC 9728 path-inserted protected
+          resource metadata endpoint (with no implicit root document) and a
+          #{inspect(pipeline_name)} pipeline that enforces the #{inspect(scopes)}
+          scope(s) and this resource's exact audience via
+          AttestoMCP.Plug.ProtectResource.
 
-        * Mount your MCP transport plug inside the #{inspect(resource_path)} scope.
-        * Configure the metadata document (authorization servers, resource
-          identifier) per the AttestoMCP README.
-      """)
+          No origin is pinned: both metadata and protection derive the resource
+          origin from each request. Behind a reverse proxy, add the same
+          `:base_url` (or `:origin`) option to the generated metadata declaration
+          and ProtectResource plug.
+
+          Next steps:
+
+            * Mount your MCP transport plug inside the #{inspect(resource_path)} scope.
+            * Configure the metadata document's authorization servers per the
+              AttestoMCP README.
+          """)
+
+        {igniter, {:conflict, issue}} ->
+          Igniter.add_issue(igniter, issue)
+      end
     end
 
-    # The metadata endpoint is mounted from the bare scope (RFC 9728 Section 3.1
-    # serves it from the well-known path, unprotected, so clients can discover the
-    # authorization server before they hold a token).
-    #
-    # The routes are emitted as plain `get` calls to `AttestoMCP.MetadataController`
-    # rather than through the `attesto_mcp_protected_resource_metadata/2` router
-    # macro, because that macro is only available after `use AttestoMCP.Router` at
-    # the module level, and `Igniter.Libs.Phoenix.add_scope/4` injects a scope body
-    # without touching the module's `use` declarations. The `get` form needs no
-    # import, compiles in any Phoenix router, and is exactly the shape RFC 9728
-    # Section 3.1 (path-suffixed) and its root-compatibility companion require. The
-    # `:scopes` private is read by the controller and served as `scopes_supported`.
+    # Mount metadata through the public router macro so generated applications
+    # inherit its RFC 9728 behavior. `root: false` is the safe repeatable default:
+    # every resource gets its path-inserted document, and no install silently
+    # claims a shared root whose meaning would depend on insertion order.
     defp add_metadata_scope(igniter, router, resource_path, scopes) do
-      private =
-        "%{attesto_mcp_metadata_opts: [scopes: #{inspect(scopes)}], attesto_mcp_resource_path: #{inspect(resource_path)}}"
-
       Phoenix.add_scope(
         igniter,
-        "/.well-known",
+        "/",
         """
-        get "/oauth-protected-resource#{resource_path}", AttestoMCP.MetadataController, :show, private: #{private}
-        get "/oauth-protected-resource", AttestoMCP.MetadataController, :show, private: #{private}
+        attesto_mcp_protected_resource_metadata #{inspect(resource_path)},
+          scopes: #{inspect(scopes)},
+          root: false
         """,
         router: router
       )
@@ -150,16 +175,330 @@ if Code.ensure_loaded?(Igniter) do
       )
     end
 
-    defp add_protect_pipeline(igniter, router, pipeline_name, _resource_path, scopes) do
+    defp add_protect_pipeline(igniter, router, pipeline_name, resource_path, scopes) do
       Phoenix.add_pipeline(
         igniter,
         pipeline_name,
         """
         plug :accepts, ["json"]
-        plug AttestoMCP.Plug.ProtectResource, scopes: #{inspect(scopes)}
+        plug AttestoMCP.Plug.ProtectResource,
+          scopes: #{inspect(scopes)},
+          resource: #{inspect(resource_path)},
+          resource_audience: :resource
         """,
         router: router
       )
+    end
+
+    # Classify the existing router before any edit. This makes a complete new
+    # scaffold byte-for-byte idempotent, while legacy raw routes, an implicit
+    # single-resource root, or partial/manual wiring stop with migration advice
+    # instead of being combined into duplicate or under-protected routes.
+    defp installation_state(igniter, router, pipeline_name, resource_path, scopes) do
+      {igniter, _source, zipper} = ProjectModule.find_module!(igniter, router)
+
+      state = classify_installation(zipper, pipeline_name, resource_path, scopes)
+      {igniter, state}
+    end
+
+    defp classify_installation(zipper, pipeline_name, resource_path, scopes) do
+      cond do
+        legacy_metadata_route?(zipper) ->
+          {:conflict, legacy_route_issue(resource_path)}
+
+        implicit_root_declaration?(zipper) ->
+          {:conflict, implicit_root_issue(resource_path)}
+
+        non_literal_metadata_declaration?(zipper) ->
+          {:conflict, non_literal_metadata_issue(resource_path)}
+
+        metadata_declaration?(zipper, resource_path) ->
+          declared_installation_state(zipper, pipeline_name, resource_path, scopes)
+
+        target_artifact?(zipper, pipeline_name, resource_path) ->
+          {:conflict, partial_installation_issue(resource_path, scopes)}
+
+        true ->
+          :absent
+      end
+    end
+
+    defp declared_installation_state(zipper, pipeline_name, resource_path, scopes) do
+      if complete_installation?(zipper, pipeline_name, resource_path, scopes) do
+        :installed
+      else
+        {:conflict, partial_installation_issue(resource_path, scopes)}
+      end
+    end
+
+    defp complete_installation?(zipper, pipeline_name, resource_path, scopes) do
+      router_uses_macro?(zipper) and
+        complete_metadata_declaration?(zipper, resource_path, scopes) and
+        complete_protection_pipeline?(zipper, pipeline_name, resource_path, scopes) and
+        protected_scope?(zipper, pipeline_name, resource_path)
+    end
+
+    defp router_uses_macro?(zipper) do
+      CodeModule.move_to_module_using(zipper, AttestoMCP.Router) != :error
+    end
+
+    defp metadata_declaration?(zipper, resource_path) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(
+          zipper,
+          :attesto_mcp_protected_resource_metadata,
+          [1, 2],
+          &Function.argument_equals?(&1, 0, resource_path)
+        )
+      )
+    end
+
+    defp complete_metadata_declaration?(zipper, resource_path, scopes) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(
+          zipper,
+          :attesto_mcp_protected_resource_metadata,
+          2,
+          fn declaration ->
+            Function.argument_equals?(declaration, 0, resource_path) and
+              Function.argument_matches_predicate?(
+                declaration,
+                1,
+                &metadata_opts_match?(&1, scopes)
+              )
+          end
+        )
+      )
+    end
+
+    defp metadata_opts_match?(opts, scopes) do
+      keyword_value_equals?(opts, :scopes, scopes) and explicit_root?(opts)
+    end
+
+    defp explicit_root?(opts) do
+      keyword_value_equals?(opts, :root, false) or keyword_value_equals?(opts, :root, true)
+    end
+
+    defp complete_protection_pipeline?(zipper, pipeline_name, resource_path, scopes) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(zipper, :pipeline, 2, fn pipeline ->
+          Function.argument_equals?(pipeline, 0, pipeline_name) and
+            pipeline_protects_resource?(pipeline, resource_path, scopes)
+        end)
+      )
+    end
+
+    defp pipeline_declared?(zipper, pipeline_name) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(
+          zipper,
+          :pipeline,
+          2,
+          &Function.argument_equals?(&1, 0, pipeline_name)
+        )
+      )
+    end
+
+    defp pipeline_protects_resource?(pipeline, resource_path, scopes) do
+      match?(
+        {:ok, _},
+        Common.within(pipeline, fn subtree ->
+          Function.move_to_function_call(subtree, :plug, 2, fn plug ->
+            Function.argument_equals?(plug, 0, ProtectResource) and
+              Function.argument_matches_predicate?(
+                plug,
+                1,
+                &protection_opts_match?(&1, resource_path, scopes)
+              )
+          end)
+        end)
+      )
+    end
+
+    defp protection_opts_match?(opts, resource_path, scopes) do
+      keyword_value_equals?(opts, :scopes, scopes) and
+        keyword_value_equals?(opts, :resource, resource_path) and
+        keyword_value_equals?(opts, :resource_audience, :resource)
+    end
+
+    defp protected_scope?(zipper, pipeline_name, resource_path) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(zipper, :scope, [2, 3], fn scope ->
+          Function.argument_equals?(scope, 0, resource_path) and
+            scope_uses_pipeline?(scope, pipeline_name)
+        end)
+      )
+    end
+
+    defp scope_uses_pipeline?(scope, pipeline_name) do
+      match?(
+        {:ok, _},
+        Common.within(scope, fn subtree ->
+          Function.move_to_function_call(
+            subtree,
+            :pipe_through,
+            1,
+            &Function.argument_equals?(&1, 0, pipeline_name)
+          )
+        end)
+      )
+    end
+
+    defp target_artifact?(zipper, pipeline_name, resource_path) do
+      pipeline_declared?(zipper, pipeline_name) or
+        pipeline_referenced?(zipper, pipeline_name) or
+        protection_for_resource?(zipper, resource_path)
+    end
+
+    defp pipeline_referenced?(zipper, pipeline_name) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(
+          zipper,
+          :pipe_through,
+          1,
+          &Function.argument_equals?(&1, 0, pipeline_name)
+        )
+      )
+    end
+
+    defp protection_for_resource?(zipper, resource_path) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(zipper, :plug, 2, fn plug ->
+          Function.argument_equals?(plug, 0, ProtectResource) and
+            Function.argument_matches_predicate?(plug, 1, fn opts ->
+              keyword_value_equals?(opts, :resource, resource_path)
+            end)
+        end)
+      )
+    end
+
+    defp keyword_value_equals?(opts, key, expected) do
+      case CodeKeyword.get_key(opts, key) do
+        {:ok, value} -> Common.nodes_equal?(value, expected)
+        :error -> false
+      end
+    end
+
+    defp legacy_metadata_route?(zipper) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(zipper, :get, [3, 4], fn route ->
+          Function.argument_equals?(route, 1, AttestoMCP.MetadataController)
+        end)
+      )
+    end
+
+    defp implicit_root_declaration?(zipper) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(
+          zipper,
+          :attesto_mcp_protected_resource_metadata,
+          [1, 2],
+          &implicit_root?/1
+        )
+      )
+    end
+
+    defp implicit_root?(declaration) do
+      Function.function_call?(declaration, :attesto_mcp_protected_resource_metadata, 1) or
+        Function.argument_matches_predicate?(declaration, 1, fn opts ->
+          not explicit_root?(opts)
+        end)
+    end
+
+    defp non_literal_metadata_declaration?(zipper) do
+      match?(
+        {:ok, _},
+        Function.move_to_function_call(
+          zipper,
+          :attesto_mcp_protected_resource_metadata,
+          [1, 2],
+          fn declaration ->
+            Function.argument_matches_predicate?(
+              declaration,
+              0,
+              &(not CodeString.string?(&1))
+            )
+          end
+        )
+      )
+    end
+
+    defp legacy_route_issue(resource_path) do
+      """
+      attesto_mcp.install found legacy raw AttestoMCP.MetadataController routes before installing
+      #{inspect(resource_path)}, so no router changes were made. Replace the legacy raw `get`
+      routes with `use AttestoMCP.Router` and one
+      `attesto_mcp_protected_resource_metadata/2` declaration per resource. Set `root: false`
+      on every resource (or explicitly set `root: true` on exactly one), and add matching
+      `resource: <path>` plus `resource_audience: :resource` options to each ProtectResource
+      pipeline. Then rerun the installer.
+      """
+    end
+
+    defp implicit_root_issue(resource_path) do
+      """
+      attesto_mcp.install found an existing protected-resource metadata declaration with an
+      implicit single-resource root before installing #{inspect(resource_path)}, so no router
+      changes were made. First make root ownership explicit on the existing declaration:
+      use `root: false` for no shared root, or `root: true` for the one resource that should own
+      it. Then rerun the installer.
+      """
+    end
+
+    defp non_literal_metadata_issue(resource_path) do
+      """
+      attesto_mcp.install found an existing protected-resource metadata declaration whose
+      resource path is not a literal string while installing #{inspect(resource_path)}, so it
+      cannot safely determine whether that declaration already owns the target route. No router
+      changes were made. Replace the declaration's module attribute or other expression with a
+      literal path, then rerun the installer; alternatively complete the resource wiring manually.
+      """
+    end
+
+    defp partial_installation_issue(resource_path, scopes) do
+      """
+      attesto_mcp.install found existing wiring for #{inspect(resource_path)}, but it does not
+      match a complete audience-confined scaffold for scopes #{inspect(scopes)}, so no router
+      changes were made. Ensure the metadata declaration uses those scopes and an explicit
+      boolean `root` option, its ProtectResource pipeline uses the same scopes plus
+      `resource: #{inspect(resource_path)}` and `resource_audience: :resource`, and the resource
+      scope pipes through that pipeline. Alternatively remove the partial wiring and rerun the
+      installer.
+      """
+    end
+
+    # The public metadata macro is imported exactly once, immediately after the
+    # router's own `use` declaration when possible, so every generated scope can
+    # expand it regardless of where Igniter inserts that scope.
+    defp ensure_router_use(igniter, router) do
+      ProjectModule.find_and_update_module!(igniter, router, fn zipper ->
+        case CodeModule.move_to_use(zipper, AttestoMCP.Router) do
+          {:ok, _present} ->
+            {:ok, zipper}
+
+          :error ->
+            {:ok, add_router_use(igniter, zipper)}
+        end
+      end)
+    end
+
+    defp add_router_use(igniter, zipper) do
+      case Phoenix.move_to_router_use(igniter, zipper) do
+        {:ok, router_use} ->
+          Common.add_code(router_use, "use AttestoMCP.Router")
+
+        :error ->
+          Common.add_code(zipper, "use AttestoMCP.Router", placement: :before)
+      end
     end
 
     defp resolve_router(igniter, options) do
@@ -175,27 +514,56 @@ if Code.ensure_loaded?(Igniter) do
       end
     end
 
-    # RFC 9728 Section 3.1 keys metadata off the resource path component; the
-    # leading slash is required for the well-known suffix and the protected scope.
-    defp normalize_resource_path("/" <> _ = path), do: path
-    defp normalize_resource_path(path), do: "/" <> path
+    # RFC 9728 Section 3.1 keys metadata off a non-empty plain resource path.
+    # Validate before Igniter edits anything so a typo cannot widen the protected
+    # scope to `/` or generate an unreachable well-known route.
+    defp normalize_resource_path(path) do
+      normalized = if String.starts_with?(path, "/"), do: path, else: "/" <> path
 
-    defp parse_scopes(scopes) do
-      scopes
-      |> String.split(",", trim: true)
-      |> Enum.map(&String.trim/1)
-      |> Enum.reject(&(&1 == ""))
+      cond do
+        normalized == "/" ->
+          Mix.raise("--resource-path must name a non-root resource path, for example /mcp")
+
+        String.contains?(normalized, "..") or String.contains?(normalized, "?") ->
+          Mix.raise("--resource-path must be a plain path without `..` segments or a query string")
+
+        true ->
+          normalized
+      end
     end
 
-    # Derive a stable, unique pipeline atom from the resource path so re-runs
-    # match the same pipeline (idempotency) and distinct resources do not collide.
+    defp parse_scopes!(scopes) do
+      parsed =
+        scopes
+        |> String.split(",", trim: true)
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+
+      if parsed == [] do
+        Mix.raise("--scopes must contain at least one OAuth scope")
+      end
+
+      parsed
+    end
+
+    # Derive a stable, bounded pipeline atom. The readable slug is not unique
+    # (`/mcp/foo-bar` and `/mcp/foo/bar` both normalize alike), so include a
+    # SHA-256 suffix to keep distinct resources on collision-resistant names.
     defp pipeline_name(resource_path) do
-      suffix =
+      slug =
         resource_path
         |> String.replace(~r/[^a-zA-Z0-9]+/, "_")
         |> String.trim("_")
+        |> String.slice(0, 40)
 
-      :"mcp_protected_#{suffix}"
+      slug = if slug == "", do: "resource", else: slug
+
+      digest =
+        :sha256
+        |> :crypto.hash(resource_path)
+        |> Base.encode16(case: :lower)
+
+      :"mcp_protected_#{slug}_#{digest}"
     end
   end
 else

@@ -41,8 +41,9 @@ replay_check = &MyApp.DPoPReplay.check_and_record/2
 ## 3. Mount discovery routes
 
 `use AttestoMCP.Router` adds `attesto_mcp_protected_resource_metadata/2`, which
-serves `/.well-known/oauth-protected-resource/<path>` for each resource (plus a
-backwards-compatible root `/.well-known/oauth-protected-resource`).
+serves `/.well-known/oauth-protected-resource/<path>` for each resource. For a
+single resource it also serves a backwards-compatible root
+`/.well-known/oauth-protected-resource` by default.
 
 ```elixir
 defmodule MyAppWeb.Router do
@@ -57,7 +58,8 @@ defmodule MyAppWeb.Router do
     pipe_through :api
 
     attesto_mcp_protected_resource_metadata "/mcp",
-      scopes: [AttestoMCP.Scopes.tools_call()]
+      scopes: [AttestoMCP.Scopes.tools_call()],
+      base_url: "https://mcp.example.com"
   end
 
   # ... protected endpoint below
@@ -65,12 +67,37 @@ end
 ```
 
 Serving more than one MCP server is one call per resource. Each gets its own
-metadata document; the root route resolves to the first declared resource.
+metadata document and scope list. A shared root cannot identify all of them, so
+the macro never allows an implicitly assigned root to survive after another
+resource is declared. If the first declaration used the single-resource
+default, adding a second resource is a compile-time error until the first makes
+its root choice explicit. Either serve no root document:
 
 ```elixir
-attesto_mcp_protected_resource_metadata "/mcp/foo", scopes: ["foo:mcp:tools:call"]
-attesto_mcp_protected_resource_metadata "/mcp/bar", scopes: ["bar:mcp:tools:call"]
+attesto_mcp_protected_resource_metadata "/mcp/foo",
+  scopes: ["foo:mcp:tools:call"],
+  root: false
+
+attesto_mcp_protected_resource_metadata "/mcp/bar",
+  scopes: ["bar:mcp:tools:call"],
+  root: false
 ```
+
+Or explicitly nominate exactly one resource for legacy root discovery:
+
+```elixir
+attesto_mcp_protected_resource_metadata "/mcp/foo",
+  scopes: ["foo:mcp:tools:call"],
+  root: false
+
+attesto_mcp_protected_resource_metadata "/mcp/bar",
+  scopes: ["bar:mcp:tools:call"],
+  root: true
+```
+
+`mix attesto_mcp.install` uses `root: false`, so sequential installations are
+safe by default. Change one declaration to `root: true` only when a legacy
+client requires the unsuffixed document.
 
 ## 4. Protect the endpoint with one plug
 
@@ -87,6 +114,8 @@ pipeline :mcp do
     config: &MyApp.Attesto.config/0,
     replay_check: &MyApp.DPoPReplay.check_and_record/2,
     resource: "/mcp",
+    base_url: "https://mcp.example.com",
+    resource_audience: :resource,
     scopes: [AttestoMCP.Scopes.tools_call()],
     principal: fn claims, sender ->
       MyApp.Principals.from_token(claims, sender)
@@ -99,6 +128,89 @@ scope "/" do
   forward "/mcp", MyApp.MCPServerPlug
 end
 ```
+
+The metadata declaration and protection pipeline must use the same resource
+path, scopes, and origin. `resource_audience: :resource` makes that identifier
+the token audience check, so a sibling resource cannot accept the token merely
+because it requires the same scope. When `:base_url`/`:origin` is omitted, both
+sides derive the origin from the request; pin the same value on both behind a
+reverse proxy.
+
+## Combined authorization server and multiple MCP resources
+
+One Phoenix host can mount one `attesto_phoenix` authorization-server catalog
+and one protected-resource metadata declaration per MCP endpoint. Keep MCP
+metadata in `attesto_mcp`, suppress the authorization server's root PRM route,
+and make the browser-facing pipeline override explicit:
+
+```elixir
+scope "/" do
+  attesto_routes(
+    prefix: "/mcp",
+    pipeline: :oauth_common,
+    route_pipelines: [
+      interactive: [:oauth_interactive, :oauth_common]
+    ],
+    registration: true,
+    protected_resource_root: false
+  )
+
+  attesto_mcp_protected_resource_metadata "/mcp/alpha",
+    scopes: ["alpha:tools"],
+    base_url: "https://mcp.example.com",
+    root: false
+
+  attesto_mcp_protected_resource_metadata "/mcp/beta",
+    scopes: ["beta:tools"],
+    base_url: "https://mcp.example.com",
+    root: false
+end
+```
+
+Protect the resources with matching paths, origins, and scope lists:
+
+```elixir
+pipeline :mcp_alpha do
+  plug :accepts, ["json", "sse"]
+
+  plug AttestoMCP.Plug.ProtectResource,
+    config: &MyApp.Attesto.resource_config/0,
+    resource: "/mcp/alpha",
+    scopes: ["alpha:tools"],
+    base_url: "https://mcp.example.com",
+    resource_audience: :resource
+end
+
+pipeline :mcp_beta do
+  plug :accepts, ["json", "sse"]
+
+  plug AttestoMCP.Plug.ProtectResource,
+    config: &MyApp.Attesto.resource_config/0,
+    resource: "/mcp/beta",
+    scopes: ["beta:tools"],
+    base_url: "https://mcp.example.com",
+    resource_audience: :resource
+end
+```
+
+The authorization-server configuration must allow both exact identifiers so
+clients can send them as RFC 8707 `resource` parameters and receive confined
+access-token audiences:
+
+```elixir
+resource_indicators: [
+  allowed_resources: [
+    "https://mcp.example.com/mcp/alpha",
+    "https://mcp.example.com/mcp/beta"
+  ]
+]
+```
+
+The resulting chain is exact for each endpoint:
+`metadata.resource == requested resource == token aud == validated audience`.
+The host still owns its session/resource-owner authentication, CSRF, and
+content-negotiation policy; externally submitted OAuth protocol POSTs should
+not inherit generic browser-only handling.
 
 After authentication, downstream code can read:
 
