@@ -58,10 +58,15 @@ defmodule AttestoMCP.Plug.ProtectResource do
       omitted, the live request origin is used. This keeps the challenge URL
       aligned with a pinned metadata `resource` and closes the
       `X-Forwarded-Host` spoofing vector. See `guides/proxy_origin.md`.
+    * `:resource_audience` - confines access tokens to this protected resource;
+      `:resource` derives its audience identifier from the resource path and
+      resolved origin. A scalar token audience must match, and every member of
+      an array-valued audience must match. This option is mutually exclusive
+      with Attesto core's `:trusted_audiences`; configuring both raises.
 
   Every other option is passed through to `AttestoMCP.Plug.Authenticate`:
   `:config`, `:replay_check`, `:nonce_check`, `:nonce_issue`, `:cert_der`,
-  `:htu`, `:credential_from_conn`, `:bearer_methods`, `:send_error`,
+  `:trusted_audiences`, `:htu`, `:credential_from_conn`, `:bearer_methods`, `:send_error`,
   `:www_authenticate`, `:no_store`, `:principal`, `:principal_key`,
   `:claims_key`, `:scopes_key`, `:sender_key`, and `:resource_metadata_url`.
   MCP defaults to `bearer_methods: [:header]`; set

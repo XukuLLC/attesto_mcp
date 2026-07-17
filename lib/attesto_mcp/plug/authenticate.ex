@@ -22,9 +22,9 @@ defmodule AttestoMCP.Plug.Authenticate do
   into the Anubis frame regardless of which authenticator ran.
 
   Options accepted by `Attesto.Plug.Authenticate`, including `:config`,
-  `:replay_check`, `:nonce_check`, `:nonce_issue`, `:cert_der`, `:htu`,
-  `:credential_from_conn`, `:bearer_methods`, `:send_error`,
-  `:www_authenticate`, and `:no_store`, are passed through.
+  `:replay_check`, `:nonce_check`, `:nonce_issue`, `:cert_der`,
+  `:trusted_audiences`, `:htu`, `:credential_from_conn`, `:bearer_methods`,
+  `:send_error`, `:www_authenticate`, and `:no_store`, are passed through.
 
   MCP defaults to `bearer_methods: [:header]`, matching protected-resource
   metadata that advertises `bearer_methods_supported: ["header"]`. A host that
@@ -35,6 +35,15 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   Additional options:
 
+    * `:resource_audience` - confines the token to this protected resource.
+      Use `:resource` to derive the identifier from `:resource_path`, or pass a
+      literal identifier / `(conn -> identifier)` / MFA callback. The resolved
+      identifier becomes Attesto core's complete `:trusted_audiences` list, so
+      a scalar `aud` must equal it and every member of an array-valued `aud`
+      must equal it. `:resource_audience` and `:trusted_audiences` are mutually
+      exclusive; configuring both raises rather than silently weakening either
+      policy. A callback must return a valid identifier; `nil` or another
+      malformed result fails authentication and never disables confinement.
     * `:principal` - optional callback that receives verified claims and sender
       context, returning `{:ok, principal}` or `{:error, reason}`.
     * `:resource_metadata_url` - URL string, `(conn -> url)` callback, or
@@ -63,7 +72,6 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   import Plug.Conn
 
-  alias Attesto.Config
   alias Attesto.Plug.Authenticate, as: AttestoAuthenticate
   alias Attesto.Plug.OAuthError
   alias AttestoMCP.Metadata
@@ -76,6 +84,7 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   @impl Plug
   def init(opts) when is_list(opts) do
+    validate_audience_policy!(opts)
     AttestoAuthenticate.init(core_opts(opts, @claims_key))
     opts
   end
@@ -86,7 +95,11 @@ defmodule AttestoMCP.Plug.Authenticate do
 
     conn =
       conn
-      |> AttestoAuthenticate.call(core_opts(opts, claims_key) |> override_resource_audience(conn, opts))
+      |> AttestoAuthenticate.call(
+        core_opts(opts, claims_key)
+        |> resolve_config_callback()
+        |> put_resource_audience(conn, opts)
+      )
 
     if conn.halted do
       conn
@@ -97,31 +110,61 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   # RFC 8707 / RFC 9728: enforce that the access token is audienced to THIS
   # protected resource. When `:resource_audience` is set, the token's `aud` is
-  # validated against this resource's identifier (the same value advertised as
-  # the RFC 9728 metadata `resource`) rather than the host's global
-  # `config.audience` - so a token minted for a sibling resource is rejected here
-  # (audience confinement, RFC 8707 §1). Computed per request because the
-  # resource identifier honors the live / pinned origin; absent, the host config
-  # audience is used unchanged (backward compatible).
-  defp override_resource_audience(core, conn, opts) do
-    case resource_audience(conn, opts) do
+  # checked through Attesto's strict `:trusted_audiences` policy against this
+  # resource's identifier (the same value advertised as the RFC 9728 metadata
+  # `resource`). This rejects both a sibling scalar audience and an array that
+  # mixes this resource with any other audience. The identifier is computed per
+  # request because it honors the live / pinned origin; absent, the host config
+  # audience (or an explicitly supplied core policy) is used unchanged.
+  defp put_resource_audience(core, conn, opts) do
+    validate_audience_policy!(opts)
+
+    case Keyword.get(opts, :resource_audience) do
       nil -> core
-      audience -> Keyword.put(core, :config, %{resolve_config(core) | audience: audience})
+      false -> core
+      policy -> Keyword.put(core, :trusted_audiences, [resolve_resource_audience(policy, conn, opts)])
     end
   end
 
-  defp resource_audience(conn, opts) do
-    case Keyword.get(opts, :resource_audience) do
-      nil -> nil
-      false -> nil
-      # `:resource` derives the identifier from the configured `:resource_path`
-      # and the resolved origin - the canonical metadata `resource` value.
-      :resource -> resource_audience_from_path(conn, opts)
-      # A literal audience, or a `(conn -> audience)` callback in fun / {m,f} /
-      # {m,f,a} form.
-      other -> invoke_resource_audience(other, conn)
+  defp validate_audience_policy!(opts) do
+    resource_audience = Keyword.get(opts, :resource_audience)
+
+    if resource_audience not in [nil, false] and Keyword.has_key?(opts, :trusted_audiences) do
+      raise ArgumentError,
+            ":resource_audience and :trusted_audiences are mutually exclusive; choose one audience policy"
     end
+
+    if resource_audience == :resource and not is_binary(Keyword.get(opts, :resource_path)) do
+      raise ArgumentError,
+            "resource_audience: :resource requires a :resource / :resource_path option to derive the audience"
+    end
+
+    if !valid_resource_audience_policy?(resource_audience) do
+      raise ArgumentError,
+            ":resource_audience must be :resource, a non-empty identifier, a one-arity function, or an MFA tuple"
+    end
+
+    :ok
   end
+
+  defp valid_resource_audience_policy?(value) when value in [nil, false, :resource], do: true
+  defp valid_resource_audience_policy?(value) when is_binary(value), do: value != ""
+  defp valid_resource_audience_policy?(value) when is_function(value, 1), do: true
+
+  defp valid_resource_audience_policy?({module, fun}) when is_atom(module) and is_atom(fun), do: true
+
+  defp valid_resource_audience_policy?({module, fun, args}) when is_atom(module) and is_atom(fun) and is_list(args),
+    do: true
+
+  defp valid_resource_audience_policy?(_value), do: false
+
+  # `:resource` derives the identifier from the configured `:resource_path` and
+  # resolved origin. Other supported values are literal identifiers or
+  # `(conn -> identifier)` callbacks in function / MFA form. A callback result
+  # is deliberately not treated as an enable/disable signal: malformed values
+  # become a malformed one-item core trust list and fail token verification.
+  defp resolve_resource_audience(:resource, conn, opts), do: resource_audience_from_path(conn, opts)
+  defp resolve_resource_audience(value, conn, _opts), do: invoke_resource_audience(value, conn)
 
   defp invoke_resource_audience(value, _conn) when is_binary(value), do: value
   defp invoke_resource_audience(fun, conn) when is_function(fun, 1), do: fun.(conn)
@@ -146,13 +189,20 @@ defmodule AttestoMCP.Plug.Authenticate do
     end
   end
 
-  defp resolve_config(core) do
-    case Keyword.fetch!(core, :config) do
-      %Config{} = config -> config
-      fun when is_function(fun, 0) -> fun.()
-      {m, f} when is_atom(m) and is_atom(f) -> apply(m, f, [])
-      {m, f, a} when is_atom(m) and is_atom(f) and is_list(a) -> apply(m, f, a)
-    end
+  # Attesto core resolves a zero-arity function itself, while this wrapper has
+  # historically also accepted MFA config callbacks. Normalize every supported
+  # callback form before handing the options to core so enabling route audience
+  # confinement cannot change whether a host's config callback works.
+  defp resolve_config_callback(core) do
+    config =
+      case Keyword.fetch!(core, :config) do
+        fun when is_function(fun, 0) -> fun.()
+        {module, fun} when is_atom(module) and is_atom(fun) -> apply(module, fun, [])
+        {module, fun, args} when is_atom(module) and is_atom(fun) and is_list(args) -> apply(module, fun, args)
+        config -> config
+      end
+
+    Keyword.put(core, :config, config)
   end
 
   defp assign_context(conn, opts, claims_key) do
@@ -240,6 +290,7 @@ defmodule AttestoMCP.Plug.Authenticate do
       :principal_key,
       :resource_metadata_url,
       :resource_path,
+      :resource_audience,
       :scopes_key,
       :sender_key
     ])

@@ -4,7 +4,29 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## [1.0.4] - 2026-07-16
+
+### Security
+
+- Per-resource audience confinement now delegates to Attesto 1.2.2's strict
+  `:trusted_audiences` policy. A scalar token audience must match the protected
+  resource, and every member of an array-valued audience must match, so adding
+  an untrusted sibling audience can no longer bypass route confinement.
+- `:resource_audience` and a caller-supplied core `:trusted_audiences` policy
+  are now mutually exclusive and fail closed during plug initialization instead
+  of allowing one policy to replace the other. Invalid static policies fail at
+  initialization, and a callback returning `nil` or another malformed value can
+  no longer disable route confinement for that request.
+- Require patched Plug branches (`1.19.5+` within 1.19 or `1.20.3+`) and,
+  when the optional Phoenix integration is used, patched Phoenix branches
+  (`1.7.24+` within 1.7 or `1.8.9+`). This excludes the intervening releases
+  affected by published denial-of-service and cookie-injection advisories even
+  when an existing consumer lock would otherwise retain them.
+
+### Changed
+
+- Requires `attesto >= 1.2.2 and < 2.0.0` for strict trusted-audience
+  verification.
 
 ## [1.0.3] - 2026-07-15
 

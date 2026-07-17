@@ -60,6 +60,9 @@ if Code.ensure_loaded?(ExUnit.Callbacks) do
     Options:
 
       * `:scopes` - scopes granted to the token (default `[AttestoMCP.Scopes.tools_call()]`).
+      * `:audience` - scalar or array-valued `aud` claim override. Attesto
+        deduplicates the array and collapses a single remaining member to a
+        scalar when minting.
       * `:dpop_jkt` - JWK thumbprint to bind the token to (RFC 9449 `cnf.jkt`).
       * `:mtls_cert_thumbprint` - certificate thumbprint to bind the token to (RFC 8705).
     """
@@ -76,7 +79,7 @@ if Code.ensure_loaded?(ExUnit.Callbacks) do
         Token.mint(
           config,
           principal,
-          Keyword.take(opts, [:dpop_jkt, :mtls_cert_thumbprint, :acr, :auth_time])
+          Keyword.take(opts, [:audience, :dpop_jkt, :mtls_cert_thumbprint, :acr, :auth_time])
         )
 
       token.access_token
