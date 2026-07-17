@@ -129,11 +129,21 @@ plug AttestoMCP.Plug.ProtectResource,
 
 `resource_audience: :resource` validates the token's `aud` against this
 endpoint's identifier (`base_url` + `resource` path) instead of the host's
-global `config.audience`. That identifier is computed by the same
+global `config.audience`. A scalar audience must equal that identifier; for an
+array-valued `aud`, every member must equal it, so a token cannot add a sibling
+audience and remain valid. That identifier is computed by the same
 `AttestoMCP.Metadata.resource_identifier/3` that produces the advertised
 metadata `resource`, so the chain — `metadata.resource` == requested `resource`
 == minted `aud` == validated `aud` — holds by construction. You can also pass a
 literal string or a `(conn -> uri)` / `{m, f}` callback.
+
+Audience callbacks must return a valid identifier. A `nil` or malformed result
+fails authentication; it never disables route confinement for that request.
+
+`resource_audience` and Attesto core's `trusted_audiences` option are mutually
+exclusive. Choose the route-derived convenience option or supply the complete
+core policy directly; configuring both raises during plug initialization so
+neither policy can silently replace the other.
 
 Pin the origin with `:base_url` when you enable this behind a TLS-terminating
 proxy: the identifier is otherwise derived from the live request origin

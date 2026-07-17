@@ -199,6 +199,34 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/user")
   end
 
+  test "direct authentication enforces a literal resource audience", %{config: config} do
+    resource = "https://mcp.example.com/mcp/reports"
+    token = Factory.access_token(config, audience: resource)
+
+    conn =
+      :post
+      |> conn("/mcp/reports")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> authenticate(config, resource_audience: resource)
+
+    refute conn.halted
+    assert conn.assigns.attesto_mcp_claims["aud"] == resource
+  end
+
+  test "direct authentication passes through a core-only trusted audience policy", %{config: config} do
+    resource = "https://mcp.example.com/mcp/reports"
+    token = Factory.access_token(config, audience: resource)
+
+    conn =
+      :post
+      |> conn("/mcp/reports")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> authenticate(config, trusted_audiences: [resource])
+
+    refute conn.halted
+    assert conn.assigns.attesto_mcp_claims["aud"] == resource
+  end
+
   test "resource_metadata_url accepts an {module, fun} tuple", %{config: config} do
     conn =
       :post

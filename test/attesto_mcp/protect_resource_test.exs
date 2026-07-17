@@ -29,24 +29,29 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
   end
 
   describe "RFC 8707 / RFC 9728 per-resource audience confinement" do
-    test "accepts a token audienced to this resource's identifier", %{config: config} do
-      # config.audience is "https://mcp.example.com/mcp"; pinning the origin makes
-      # the derived resource identifier equal it.
-      token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+    test "accepts a scalar token audience matching this resource's identifier", %{config: config} do
+      resource = "https://mcp.example.com/mcp/reports"
+
+      token =
+        Factory.access_token(config,
+          audience: resource,
+          scopes: [Scopes.tools_call()]
+        )
 
       conn =
         :post
-        |> conn("/mcp")
+        |> conn("/mcp/reports")
         |> put_req_header("authorization", "Bearer " <> token)
         |> protect(config,
           scopes: [Scopes.tools_call()],
-          resource: "/mcp",
+          resource: "/mcp/reports",
           base_url: "https://mcp.example.com",
           resource_audience: :resource
         )
 
       refute conn.halted
       assert conn.assigns.attesto_mcp_claims["sub"] == "usr_123"
+      assert conn.assigns.attesto_mcp_claims["aud"] == resource
     end
 
     test "rejects a token audienced to a sibling resource", %{config: config} do
@@ -68,6 +73,207 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       assert conn.halted
       assert conn.status == 401
       assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    end
+
+    test "rejects an audience array containing this resource and an untrusted sibling", %{config: config} do
+      resource = "https://mcp.example.com/mcp"
+      sibling = "https://mcp.example.com/admin"
+
+      token =
+        Factory.access_token(config,
+          audience: [resource, sibling],
+          scopes: [Scopes.tools_call()]
+        )
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config,
+          scopes: [Scopes.tools_call()],
+          resource: "/mcp",
+          base_url: "https://mcp.example.com",
+          resource_audience: :resource
+        )
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    end
+
+    test "accepts an array whose members all exactly match this resource", %{config: config} do
+      resource = "https://mcp.example.com/mcp"
+
+      token =
+        config
+        |> Factory.access_token(scopes: [Scopes.tools_call()])
+        |> replace_audience(config, [resource, resource])
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config,
+          scopes: [Scopes.tools_call()],
+          resource: "/mcp",
+          base_url: "https://mcp.example.com",
+          resource_audience: :resource
+        )
+
+      refute conn.halted
+      assert conn.assigns.attesto_mcp_claims["aud"] == [resource, resource]
+    end
+
+    test "rejects conflicting route and core audience policies at initialization", %{config: config} do
+      assert_raise ArgumentError, ~r/:resource_audience and :trusted_audiences are mutually exclusive/, fn ->
+        ProtectResource.init(
+          config: config,
+          scopes: [Scopes.tools_call()],
+          resource: "/mcp",
+          resource_audience: :resource,
+          trusted_audiences: ["https://mcp.example.com/admin"]
+        )
+      end
+    end
+
+    test "rejects a derived resource audience without a resource path at initialization", %{config: config} do
+      assert_raise ArgumentError, ~r/requires a :resource \/ :resource_path option/, fn ->
+        ProtectResource.init(
+          config: config,
+          scopes: [Scopes.tools_call()],
+          resource_audience: :resource
+        )
+      end
+    end
+
+    test "rejects malformed resource audience policy forms at initialization", %{config: config} do
+      for malformed <- [:resourse, fn -> config.audience end, ""] do
+        assert_raise ArgumentError, ~r/:resource_audience must be/, fn ->
+          ProtectResource.init(
+            config: config,
+            scopes: [Scopes.tools_call()],
+            resource: "/mcp",
+            resource_audience: malformed
+          )
+        end
+      end
+    end
+
+    test "allows a core-only trusted audience policy when route derivation is explicitly disabled", %{config: config} do
+      resource = "https://mcp.example.com/mcp/reports"
+
+      token =
+        Factory.access_token(config,
+          audience: resource,
+          scopes: [Scopes.tools_call()]
+        )
+
+      conn =
+        :post
+        |> conn("/mcp/reports")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config,
+          scopes: [Scopes.tools_call()],
+          resource: "/mcp/reports",
+          resource_audience: false,
+          trusted_audiences: [resource]
+        )
+
+      refute conn.halted
+      assert conn.assigns.attesto_mcp_claims["aud"] == resource
+    end
+
+    test "supports literal, function, and MFA resource audience callbacks", %{config: config} do
+      resource = "https://mcp.example.com/mcp/reports"
+      token = Factory.access_token(config, audience: resource, scopes: [Scopes.tools_call()])
+      Process.put({__MODULE__, :resource_audience}, resource)
+
+      resource_audiences = [
+        resource,
+        fn _conn -> resource end,
+        {__MODULE__, :resource_audience_from_process},
+        {__MODULE__, :resource_audience_from_argument, [resource]}
+      ]
+
+      for resource_audience <- resource_audiences do
+        conn =
+          :post
+          |> conn("/mcp/reports")
+          |> put_req_header("authorization", "Bearer " <> token)
+          |> protect(config,
+            scopes: [Scopes.tools_call()],
+            resource: "/mcp/reports",
+            resource_audience: resource_audience
+          )
+
+        refute conn.halted
+        assert conn.assigns.attesto_mcp_claims["aud"] == resource
+      end
+    end
+
+    test "a resource audience callback returning nil fails closed", %{config: config} do
+      token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config,
+          scopes: [Scopes.tools_call()],
+          resource: "/mcp",
+          resource_audience: fn _conn -> nil end
+        )
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    end
+
+    test "rejects the configured default audience when it is not this resource", %{config: config} do
+      token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+
+      conn =
+        :post
+        |> conn("/mcp/reports")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config,
+          scopes: [Scopes.tools_call()],
+          resource: "/mcp/reports",
+          base_url: "https://mcp.example.com",
+          resource_audience: :resource
+        )
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    end
+
+    test "supports two- and three-element MFA config callbacks", %{config: config} do
+      resource = "https://mcp.example.com/mcp/reports"
+      token = Factory.access_token(config, audience: resource, scopes: [Scopes.tools_call()])
+      Process.put({__MODULE__, :config}, config)
+
+      config_callbacks = [
+        {__MODULE__, :config_from_process},
+        {__MODULE__, :config_from_argument, [config]}
+      ]
+
+      for config_callback <- config_callbacks do
+        conn =
+          :post
+          |> conn("/mcp/reports")
+          |> put_req_header("authorization", "Bearer " <> token)
+          |> protect(config,
+            config: config_callback,
+            scopes: [Scopes.tools_call()],
+            resource: "/mcp/reports",
+            base_url: "https://mcp.example.com",
+            resource_audience: :resource
+          )
+
+        refute conn.halted
+        assert conn.assigns.attesto_mcp_claims["aud"] == resource
+      end
     end
 
     test "without :resource_audience the host's global config.audience is used", %{config: config} do
@@ -324,6 +530,20 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
   defp dpop_jkt do
     {_proof, jkt} = Factory.dpop_proof("placeholder")
     jkt
+  end
+
+  def config_from_process, do: Process.get({__MODULE__, :config})
+  def config_from_argument(config), do: config
+  def resource_audience_from_process(_conn), do: Process.get({__MODULE__, :resource_audience})
+  def resource_audience_from_argument(_conn, resource), do: resource
+
+  defp replace_audience(token, config, audience) do
+    {:ok, claims} = Attesto.Token.peek_signed_claims(config, token)
+    header = token |> JOSE.JWS.peek_protected() |> JSON.decode!()
+    key = config.keystore.signing_pem() |> JOSE.JWK.from_pem()
+    signed = JOSE.JWT.sign(key, header, Map.put(claims, "aud", audience))
+    {_jws, compact} = JOSE.JWS.compact(signed)
+    compact
   end
 
   defp protect(conn, config, opts) do

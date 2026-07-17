@@ -132,9 +132,11 @@ end
 The metadata declaration and protection pipeline must use the same resource
 path, scopes, and origin. `resource_audience: :resource` makes that identifier
 the token audience check, so a sibling resource cannot accept the token merely
-because it requires the same scope. When `:base_url`/`:origin` is omitted, both
-sides derive the origin from the request; pin the same value on both behind a
-reverse proxy.
+because it requires the same scope. A scalar `aud` must equal the identifier,
+and every member of an array-valued `aud` must equal it. Do not combine this
+route-derived policy with Attesto core's `trusted_audiences`; configure one or
+the other. When `:base_url`/`:origin` is omitted, both sides derive the origin
+from the request; pin the same value on both behind a reverse proxy.
 
 ## Combined authorization server and multiple MCP resources
 

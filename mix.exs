@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "1.0.3"
+  @version "1.0.4"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -47,12 +47,12 @@ defmodule AttestoMCP.MixProject do
   defp deps do
     [
       attesto_dep(),
-      {:plug, "~> 1.16"},
+      {:plug, "~> 1.19.5 or >= 1.20.3 and < 2.0.0"},
 
       # Optional: only needed by AttestoMCP.Router and AttestoMCP.MetadataController.
       # Plug-only consumers (and the Authenticate/RequireScopes/ProtectResource
       # plugs) do not require it. Phoenix apps already depend on it directly.
-      {:phoenix, "~> 1.7", optional: true},
+      {:phoenix, "~> 1.7.24 or >= 1.8.9 and < 2.0.0", optional: true},
 
       # Optional: only needed by the `mix attesto_mcp.install` Igniter task.
       # Library consumers never call the installer at runtime, so the dependency
@@ -104,16 +104,17 @@ defmodule AttestoMCP.MixProject do
   # package. This is gated on the env var, not just `File.dir?`, so `mix
   # hex.publish` (which runs in :dev with the sibling on disk) resolves the Hex
   # constraint rather than a path dep, which cannot be packaged. Requires
-  # attesto 1.2 for the Static keystore signing_alg/kid labelling fix, plus RFC
-  # 9470 step-up (the `:step_up` plug option +
-  # `Attesto.Plug.OAuthError.insufficient_user_authentication/4`) and the
+  # Attesto 1.2.2 supplies strict trusted RFC 8707 audience policy, plus the
+  # Static keystore signing_alg/kid labelling fix, RFC 9470 step-up (the
+  # `:step_up` plug option and
+  # `Attesto.Plug.OAuthError.insufficient_user_authentication/4`), and the
   # `Attesto.Plug.{OAuthError,RequireScopes}` transport hooks this MCP layer
   # delegates to.
   defp attesto_dep do
     if System.get_env("ATTESTO_PATH") in ~w(1 true) and File.dir?("../attesto") do
       {:attesto, path: "../attesto", override: true}
     else
-      {:attesto, "~> 1.2"}
+      {:attesto, ">= 1.2.2 and < 2.0.0"}
     end
   end
 
