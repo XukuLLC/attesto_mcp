@@ -581,7 +581,8 @@ else
 
           mix igniter.install attesto_mcp
 
-      or add `{:igniter, "~> 0.5"}` to your deps and run `mix attesto_mcp.install` again.
+      or add `{:igniter, ">= 0.6.0 and < 1.0.0"}` to your deps and run
+      `mix attesto_mcp.install` again.
       """)
 
       exit({:shutdown, 1})

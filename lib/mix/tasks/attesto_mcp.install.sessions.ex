@@ -160,8 +160,8 @@ else
       Mix.shell().error("""
       The task 'attesto_mcp.install.sessions' requires igniter.
 
-      Add `{:igniter, "~> 0.5", only: [:dev, :test]}` to your deps and run
-      `mix deps.get`, then re-run this task.
+      Add `{:igniter, ">= 0.6.0 and < 1.0.0", only: [:dev, :test]}` to your
+      deps and run `mix deps.get`, then re-run this task.
       """)
 
       exit({:shutdown, 1})
