@@ -4,6 +4,35 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.5] - 2026-07-25
+
+### Security
+
+- Encode the security-fixed floor for every supported Plug minor line from
+  1.16 through 1.20, retaining broad compatibility without permitting affected
+  patch releases between a single lower and upper bound.
+- Require Postgrex 0.22.3 or newer in the package's test environment, excluding
+  releases affected by the notification reconnect replay vulnerability. This
+  dependency remains test-only and does not enter a consumer's dependency tree.
+
+### Changed
+
+- Requires `attesto >= 1.3.0 and < 2.0.0`. The floor carries the same optional
+  Plug security branches and JOSE 1.11.12 boundary as 1.2.5, and adds key-bound
+  algorithm validation to every verification path this package uses: a DPoP
+  proof key must be an RSA key of at least 2048 bits for every accepted RSASSA
+  and RSA-PSS algorithm, and a trusted algorithm can no longer be paired with an
+  incompatible key type or curve.
+- The optional installer integration now requires Igniter 0.6.0 or newer, and
+  the optional Anubis bridge requires Anubis MCP 1.7.0 or newer. Both retain a
+  next-major upper bound.
+
+### Documentation
+
+- Describe the optional Horde registry in terms of its cluster-wide session
+  uniqueness and routing. Anubis MCP 1.7.0 fixed its own dynamic session-name
+  fallback, so Horde is no longer presented as compensating for that issue.
+
 ## [1.0.4] - 2026-07-16
 
 ### Security
@@ -99,8 +128,7 @@ functional change from 0.11.0. Requires `attesto ~> 1.0`.
     session process.
   - `AttestoMCP.Anubis.Registry.Horde` — a cluster-wide `Anubis.Server.Registry`
     that keeps the client-supplied `session_id` as CRDT/ETS data (a `:via`
-    tuple), closing the **atom-table-exhaustion DoS** in the bundled `:pg`
-    adapter (which derives a never-GC'd atom per session id), and routes a
+    tuple), coordinates cluster-wide session-name ownership, and routes a
     request landing on any node to the node holding the session. Compile-guarded
     on `Horde.Registry`.
   - `mix attesto_mcp.install.sessions` — an Igniter installer that writes the

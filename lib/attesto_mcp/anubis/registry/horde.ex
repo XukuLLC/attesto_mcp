@@ -3,19 +3,13 @@ if Code.ensure_loaded?(Anubis.Server.Registry) and Code.ensure_loaded?(Horde.Reg
     @moduledoc """
     `Horde.Registry`-backed session registry for the Anubis MCP transports.
 
-    ## Why not `Anubis.Server.Registry.PG`
+    ## Cluster-wide registration
 
-    The bundled `Anubis.Server.Registry.PG` adapter does not implement the
-    optional `session_name/2` callback. When the transport resolves a session
-    name, the fallback builds a **dynamic atom** from the client-supplied
-    `mcp-session-id`:
-
-        :"\#{registry_name}.session.\#{session_id}"
-
-    Atoms are never garbage collected, so a client that walks distinct
-    `mcp-session-id` values can exhaust the BEAM atom table and crash the node - a
-    remote, unauthenticated denial of service. `:pg` also gives no cluster-wide
-    *name* uniqueness, only process-group membership.
+    Anubis 1.7 and later safely name client-supplied session IDs through an
+    Elixir `Registry`; its bundled `Anubis.Server.Registry.PG` can route
+    requests to live sessions across connected nodes. This adapter is for hosts
+    that also want Horde's CRDT-backed cluster-wide name ownership, so one
+    distributed registry coordinates session names and lookup.
 
     This adapter implements `session_name/2`, returning a `:via` tuple:
 
@@ -23,10 +17,10 @@ if Code.ensure_loaded?(Anubis.Server.Registry) and Code.ensure_loaded?(Horde.Reg
 
     Because Anubis passes that name to the session `GenServer.start_link/3`, the
     session auto-registers in the CRDT-backed `Horde.Registry` on start. The
-    `session_id` is kept as ETS/CRDT **data**, never converted to an atom, so the
-    atom-exhaustion vector is closed. Horde gives cluster-wide name uniqueness and
-    resolves a registered name to the owning (possibly remote) pid, so a request
-    that lands on any node routes transparently to the node holding the session.
+    `session_id` is kept as ETS/CRDT data. Horde gives cluster-wide name
+    uniqueness and resolves a registered name to the owning (possibly remote)
+    pid, so a request that lands on any node routes transparently to the node
+    holding the session.
 
     Anubis starts the session `DynamicSupervisor` itself, so this adapter only
     starts the `Horde.Registry`; cross-node request routing is handled by

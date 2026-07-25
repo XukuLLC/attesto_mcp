@@ -83,8 +83,8 @@ compile-guarded, so an RS-only consumer pulls in neither):
   reconnects after a node replacement with its initialized state restored. Wire
   it with `mix attesto_mcp.install.sessions`.
 - `AttestoMCP.Anubis.Registry.Horde` — a cluster-wide `Anubis.Server.Registry`
-  that routes a request to the node holding the session and closes the
-  atom-exhaustion DoS in the bundled `:pg` adapter.
+  that uses Horde's CRDT-backed names for cluster-wide session uniqueness and
+  routes a request to the node holding the session.
 
 See each module's docs for wiring details.
 
