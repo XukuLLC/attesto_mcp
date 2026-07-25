@@ -4,7 +4,7 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [1.0.5] - 2026-07-17
+## [1.0.5] - 2026-07-25
 
 ### Security
 
@@ -17,9 +17,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
-- Requires `attesto >= 1.2.5 and < 2.0.0`, whose optional Plug requirement uses
-  the same branch-specific security floors and whose JOSE 1.11.12 floor combines
-  Erlang/OTP 28 EC key compatibility with correct `nil`-to-JSON-`null` encoding.
+- Requires `attesto >= 1.3.0 and < 2.0.0`. The floor carries the same optional
+  Plug security branches and JOSE 1.11.12 boundary as 1.2.5, and adds key-bound
+  algorithm validation to every verification path this package uses: a DPoP
+  proof key must be an RSA key of at least 2048 bits for every accepted RSASSA
+  and RSA-PSS algorithm, and a trusted algorithm can no longer be paired with an
+  incompatible key type or curve.
 - The optional installer integration now requires Igniter 0.6.0 or newer, and
   the optional Anubis bridge requires Anubis MCP 1.7.0 or newer. Both retain a
   next-major upper bound.

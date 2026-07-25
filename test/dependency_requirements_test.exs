@@ -23,8 +23,8 @@ defmodule AttestoMCP.DependencyRequirementsTest do
   test "Attesto and test-only Postgrex use their patched floors" do
     case dependency!(:attesto) do
       {:attesto, requirement} when is_binary(requirement) ->
-        assert_matches(requirement, ~w(1.2.5 1.99.0))
-        refute_matches(requirement, ~w(1.2.4 2.0.0))
+        assert_matches(requirement, ~w(1.3.0 1.99.0))
+        refute_matches(requirement, ~w(1.2.5 2.0.0))
 
       {:attesto, opts} when is_list(opts) ->
         assert opts[:path], "expected the explicit ATTESTO_PATH development dependency"
