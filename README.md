@@ -74,17 +74,26 @@ present, so non-Anubis MCP servers do not take a hard dependency on it.
 
 ### Clustered or persistent sessions (optional)
 
-If you run Anubis across multiple nodes, or want MCP sessions to survive a
-deploy, two optional adapters fill gaps in Anubis's bundled options (both
-compile-guarded, so an RS-only consumer pulls in neither):
+Anubis already covers the common multi-node case itself:
+`Anubis.Server.Registry.PG` tracks session pids in a `:pg` scope shared across
+connected nodes and routes a request to the node holding the session, and
+`Anubis.Server.Session.Store.Redis` persists sessions across restarts. Reach for
+those first.
+
+Two optional adapters sit alongside them for hosts whose infrastructure points
+elsewhere (both compile-guarded, so an RS-only consumer pulls in neither):
 
 - `AttestoMCP.Anubis.SessionStore.Ecto` — a Postgres-backed
-  `Anubis.Server.Session.Store` (Anubis ships only Redis), so a client
-  reconnects after a node replacement with its initialized state restored. Wire
-  it with `mix attesto_mcp.install.sessions`.
-- `AttestoMCP.Anubis.Registry.Horde` — a cluster-wide `Anubis.Server.Registry`
-  that uses Horde's CRDT-backed names for cluster-wide session uniqueness and
-  routes a request to the node holding the session.
+  `Anubis.Server.Session.Store`, for hosts that would rather not run Redis for
+  this alone; Redis is the only store Anubis bundles. A client reconnects after
+  a node replacement with its initialized state restored. Wire it with
+  `mix attesto_mcp.install.sessions`.
+- `AttestoMCP.Anubis.Registry.Horde` — an `Anubis.Server.Registry` backed by
+  Horde's CRDT-backed name ownership. Cross-node routing is not what this adds;
+  `Registry.PG` already does that. What it adds is cluster-wide *uniqueness*:
+  `:pg` permits several pids to join one session group and returns whichever
+  comes first, while Horde makes a registered name resolve to a single owning
+  pid.
 
 See each module's docs for wiring details.
 
@@ -106,6 +115,28 @@ This package provides builders for:
 It intentionally avoids a hard dependency on a specific Elixir MCP SDK. Anubis
 gets a bridge because its frame authorization contract is widely used and small
 to support; the core auth boundary remains a normal Plug boundary.
+
+### How clients identify themselves
+
+None of this is the resource server's concern — how a client obtains a token is
+settled between it and the authorization server, and `attesto_mcp` only
+validates what arrives. It matters when choosing what to enable on the
+authorization server, so it is worth stating which way the spec has moved.
+
+The MCP authorization spec now prefers **Client ID Metadata Documents** (CIMD):
+the client uses an HTTPS URL as its `client_id`, and the authorization server
+dereferences that URL to a JSON metadata document. There is no registration
+request and no per-client state on the server. Dynamic client registration (RFC
+7591) is deprecated in favour of it.
+
+`attesto_phoenix` implements both. CIMD is off by default and enabled through
+its `:client_id_metadata` configuration; the registration endpoint is likewise
+opt-in. A CIMD client is always public (`none` + PKCE) or `private_key_jwt` — it
+can never carry a shared secret — and installed applications are supported
+through the document's own RFC 8252 §7.3 loopback redirect URIs.
+
+The token this server validates is the same either way, so no `attesto_mcp`
+wiring changes with that choice.
 
 ### Per-resource audience confinement (RFC 8707 + RFC 9728)
 
@@ -165,9 +196,11 @@ discovery, and scopes. `attesto_mcp` reuses those checks and adds MCP-facing
 Plug and Anubis ergonomics.
 
 `attesto_phoenix` is the Phoenix/Ecto authorization-server layer: routes,
-controllers, registration, stores, and Phoenix-friendly configuration. MCP
-servers that need dynamic client registration should expose it through the
-authorization server layer rather than duplicate RFC 7591 here.
+controllers, client registration and CIMD, stores, and Phoenix-friendly
+configuration. MCP servers that need clients to identify themselves without
+prior registration should expose CIMD — or, for the deprecated path, RFC 7591
+registration — through the authorization server layer rather than duplicate
+either here.
 
 ## Installation
 
@@ -307,9 +340,11 @@ class-specific OAuth pipelines, two MCP metadata declarations, matching
 audience-confined protection, and both RFC 8707 allowed resource identifiers—
 see [the MCP wiring guide](guides/mcp_wiring.md#combined-authorization-server-and-multiple-mcp-resources).
 
-Dynamic client registration should be exposed by the authorization server. When
-using `attesto_phoenix`, enable its registration route and callbacks there. Only
-advertise registration response fields such as `client_secret_expires_at`,
+Client onboarding belongs to the authorization server, not here. With
+`attesto_phoenix` that means enabling CIMD (`:client_id_metadata`) for the
+preferred path, and its registration route and callbacks if you still need RFC
+7591 — see [How clients identify themselves](#how-clients-identify-themselves).
+Only advertise registration response fields such as `client_secret_expires_at`,
 `registration_access_token`, and `registration_client_uri` if the authorization
 server implementation returns and persists them correctly.
 
