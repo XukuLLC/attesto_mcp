@@ -34,12 +34,40 @@ implementation and your app's policy.
 
 ## If you use Anubis
 
-[Anubis](https://hex.pm/packages/anubis_mcp) already has authorization-aware
-helpers such as `Frame.scopes/1`, `Frame.has_scope?/2`, and scope-aware tool
-visibility. Those helpers read from `frame.context.auth`. A Plug/Phoenix auth
-pipeline, however, naturally verifies the request before the Anubis frame exists.
+[Anubis](https://hex.pm/packages/anubis_mcp) validates authorization itself.
+`Anubis.Server.Authorization` covers RFC 6750 bearer tokens, RFC 9728 protected
+resource metadata, RFC 8707 audience validation, and RFC 7662 introspection,
+with a pluggable `Anubis.Server.Authorization.Validator`; it stores the verified
+claims in `Context.auth`, which is what `Frame.scopes/1`, `Frame.has_scope?/2`,
+and scope-aware tool visibility read from.
 
-This package connects those two layers:
+`attesto_mcp` is the alternative when you want either of two things.
+
+The first is **sender-constrained** tokens — DPoP (RFC 9449) or mTLS
+certificate binding (RFC 8705) — so a stolen token is not enough to make a
+request. Those cannot be done from a validator, and not by oversight. The
+contract is
+
+```elixir
+@callback validate_token(token(), config()) :: {:ok, claims()} | {:error, reason()}
+```
+
+which receives the token and configuration and nothing else. A DPoP proof binds
+to the request method and URI and arrives in its own header; an mTLS binding
+needs the TLS peer certificate. Neither is reachable from that signature, so a
+sender-constrained check has to happen at the HTTP boundary, before the frame
+exists. That is where this package sits.
+
+The second is the verification engine. `attesto_mcp` performs its checks with
+`attesto`, the same engine behind an OpenID Certified authorization server:
+FAPI 2.0 Security Profile Final and FAPI 2.0 Message Signing Final among ten
+granted profiles, all verified against the OpenID Foundation conformance
+suites. Certification covers the OpenID Provider role rather than a resource
+server — the OpenID Foundation runs no RS programme — but the JWT, JWKS, DPoP
+and audience handling a resource server leans on is that same code, exercised
+by those suites.
+
+Run one or the other, not both. The wiring for this one:
 
 1. `AttestoMCP.Plug.ProtectResource` protects `/mcp` before the Anubis transport
    handles the request.
@@ -64,10 +92,16 @@ def handle_request(request, frame) do
 end
 ```
 
-That saves an Anubis host from hand-writing token parsing, DPoP proof checks,
-protected-resource challenges, scope rejection responses, and the
-`frame.context.auth` projection. It does not add role, tenant, admin, or tool
-visibility policy; keep that in your app.
+Anubis's own authorization stays off in this arrangement — the request is
+already verified by the time the transport sees it, and `put_auth/1` hands the
+result over in the shape `Context.auth` expects, so the frame helpers work
+unchanged.
+
+What you get for that is DPoP proof verification with replay and nonce checks,
+mTLS certificate binding, protected-resource challenges, scope rejection
+responses, and the `frame.context.auth` projection, none of it hand-written. It
+does not add role, tenant, admin, or tool visibility policy; keep that in your
+app.
 
 `anubis_mcp` is optional. The bridge module compiles only when Anubis is
 present, so non-Anubis MCP servers do not take a hard dependency on it.
