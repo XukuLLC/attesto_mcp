@@ -37,6 +37,10 @@ jobs:
           mix local.rebar --force
           mix deps.get
 
+      - name: Audit dependency advisories
+        if: ${{ matrix.lint }}
+        run: mix hex.audit
+
       - name: Compile consumer (warnings as errors)
         run: mix compile --warnings-as-errors
 

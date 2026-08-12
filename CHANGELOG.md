@@ -4,6 +4,18 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-08-11
+
+### Security
+
+- Require `attesto >= 1.12.2`, so MCP resource servers cannot resolve a core
+  release predating raw RSA-key denial-of-service bounds and the current token,
+  DPoP, parser, and wallet hardening.
+- Remove the stale, unused Bandit lock entry affected by the WebSocket
+  fragmentation advisory and refresh Postgrex past its stream-comment advisory.
+  Neither dependency enters the package's runtime closure, but CI and
+  integration environments no longer retain an affected release.
+
 ## [1.0.5] - 2026-07-25
 
 ### Security

@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "1.0.5"
+  @version "1.1.0"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -83,7 +83,7 @@ defmodule AttestoMCP.MixProject do
       # run against a real Postgres repo (`AttestoMCP.TestRepo`); a consumer's
       # own host application supplies `ecto_sql` + a driver.
       {:ecto_sql, "~> 3.10", only: :test},
-      {:postgrex, ">= 0.22.3 and < 1.0.0", only: :test},
+      {:postgrex, ">= 0.22.4 and < 1.0.0", only: :test},
 
       # test-only: the `mix attesto_mcp.install` tests drive a synthetic Phoenix
       # project via `Igniter.Test.phx_test_project/1`, which needs igniter's
@@ -117,7 +117,7 @@ defmodule AttestoMCP.MixProject do
     if System.get_env("ATTESTO_PATH") in ~w(1 true) and File.dir?("../attesto") do
       {:attesto, path: "../attesto", override: true}
     else
-      {:attesto, ">= 1.3.0 and < 2.0.0"}
+      {:attesto, ">= 1.12.2 and < 2.0.0"}
     end
   end
 
