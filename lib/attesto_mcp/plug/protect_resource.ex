@@ -34,10 +34,45 @@ defmodule AttestoMCP.Plug.ProtectResource do
       plug AttestoMCP.Plug.RequireScopes,
         scopes: [AttestoMCP.Scopes.tools_call()]
 
+  ## Dynamically classified requests
+
+  Some protected resources cannot know the required scope until a bounded
+  request envelope has been classified. For that case, use the explicit
+  two-phase API:
+
+      protection =
+        AttestoMCP.Plug.ProtectResource.prepare(
+          config: &MyApp.Attesto.config/0,
+          resource: "/mcp"
+        )
+
+      conn = AttestoMCP.Plug.ProtectResource.authenticate(conn, protection)
+
+      if conn.halted do
+        conn
+      else
+        # Classify only bounded, side-effect-free request metadata here.
+        scopes = scopes_for_request(conn)
+        conn = AttestoMCP.Plug.ProtectResource.authorize(conn, protection, scopes)
+
+        if conn.halted, do: conn, else: dispatch(conn)
+      end
+
+  `authenticate/2` performs the token and sender-constraint verification once.
+  It also binds the authenticated connection to that prepared boundary, so
+  `authorize/3` rejects a connection authenticated by a different boundary or
+  one carrying only pre-existing assigns. `authorize/3` then consumes the
+  verified assigns and enforces the supplied scopes through `RequireScopes`.
+  An empty scope list means the classified operation requires authentication
+  but no additional OAuth scope. The host MUST call `authorize/3` before
+  dispatch; a prepared split boundary is deliberately not accepted by `call/2`.
+
   ## Options
 
-    * `:scopes` (or `:scope`) - the scope(s) the route requires, forwarded to
-      `AttestoMCP.Plug.RequireScopes`. At least one scope is required.
+    * `:scopes` (or `:scope`) - the scope(s) a normal Plug route requires,
+      forwarded to `AttestoMCP.Plug.RequireScopes`. At least one scope is
+      required by `init/1`; omit this option from `prepare/1` and supply the
+      classified list to `authorize/3` instead.
     * `:step_up` - an optional RFC 9470 step-up requirement for the route
       (`[acr_values: ["phr"], max_age: 300]` or an
       `%Attesto.StepUp.Requirement{}`). After the token is verified, its
@@ -80,8 +115,21 @@ defmodule AttestoMCP.Plug.ProtectResource do
 
   @behaviour Plug
 
+  alias Attesto.Plug.OAuthError
+  alias Attesto.Scope
   alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Plug.RequireScopes
+
+  @boundary_private_key :attesto_mcp_protect_resource_boundary
+
+  @typedoc "An opaque, prepared protected-resource boundary."
+  @opaque protection :: %{
+            required(:authenticate) => keyword(),
+            required(:boundary_id) => binary(),
+            required(:metadata_challenge) => keyword(),
+            required(:require_scopes) => nil,
+            required(:scope_opts) => keyword()
+          }
 
   # Options that RequireScopes consumes. The scope set is its own; the rest are
   # shared with Authenticate so both steps render through one error envelope and
@@ -98,9 +146,45 @@ defmodule AttestoMCP.Plug.ProtectResource do
 
   @impl Plug
   def init(opts) when is_list(opts) do
+    opts
+    |> build_protection()
+    |> Map.put(:require_scopes, RequireScopes.init(require_scopes_opts(opts)))
+  end
+
+  @impl Plug
+  def call(_conn, %{require_scopes: nil}) do
+    raise ArgumentError,
+          "a split ProtectResource boundary must call authenticate/2 and authorize/3 explicitly"
+  end
+
+  def call(conn, %{require_scopes: require_scopes, metadata_challenge: metadata_challenge} = protection) do
+    conn = authenticate(conn, protection)
+
+    if conn.halted do
+      conn
+    else
+      RequireScopes.call(conn, put_metadata_challenge(require_scopes, metadata_challenge))
+    end
+  end
+
+  @doc "Prepares an authentication-first boundary whose scopes are supplied to `authorize/3`."
+  @spec prepare(keyword()) :: protection()
+  def prepare(opts) when is_list(opts) do
+    if Enum.any?(@scope_keys, &Keyword.has_key?(opts, &1)) do
+      raise ArgumentError,
+            "prepare/1 accepts dynamic scopes only; pass the required scopes to authorize/3"
+    end
+
+    opts
+    |> build_protection()
+    |> Map.put(:boundary_id, :crypto.strong_rand_bytes(32))
+  end
+
+  defp build_protection(opts) do
     %{
       authenticate: Authenticate.init(authenticate_opts(opts)),
-      require_scopes: RequireScopes.init(require_scopes_opts(opts)),
+      require_scopes: nil,
+      scope_opts: Keyword.take(opts, @shared_keys),
       # Escape-safe spec used to build the scope-rejection `resource_metadata`
       # challenge at CALL time. Baking the generated `:www_authenticate` closure
       # into init/1 would make the result non-escapable, so the plug could not be
@@ -109,14 +193,54 @@ defmodule AttestoMCP.Plug.ProtectResource do
     }
   end
 
-  @impl Plug
-  def call(conn, %{authenticate: authenticate, require_scopes: require_scopes, metadata_challenge: metadata_challenge}) do
-    conn = Authenticate.call(conn, authenticate)
+  @doc "Authenticates a request through a prepared ProtectResource boundary."
+  @spec authenticate(Plug.Conn.t(), protection() | map()) :: Plug.Conn.t()
+  def authenticate(conn, %{authenticate: authenticate} = protection) do
+    conn =
+      conn
+      |> Plug.Conn.put_private(@boundary_private_key, nil)
+      |> Authenticate.call(authenticate)
 
     if conn.halted do
       conn
     else
-      RequireScopes.call(conn, put_metadata_challenge(require_scopes, metadata_challenge))
+      mark_boundary_authenticated(conn, protection)
+    end
+  end
+
+  @doc "Enforces dynamically selected scopes after `authenticate/2` and before dispatch."
+  @spec authorize(Plug.Conn.t(), protection(), [String.t()]) :: Plug.Conn.t()
+  def authorize(conn, protection, scopes) when is_list(scopes) do
+    validate_dynamic_scopes!(scopes)
+
+    cond do
+      conn.halted ->
+        conn
+
+      not boundary_authenticated?(conn, protection) ->
+        reject_unbound_connection(conn, protection)
+
+      scopes == [] ->
+        conn
+
+      true ->
+        require_scopes =
+          protection.scope_opts
+          |> Keyword.put(:scopes, scopes)
+          |> RequireScopes.init()
+          |> put_metadata_challenge(protection.metadata_challenge)
+
+        RequireScopes.call(conn, require_scopes)
+    end
+  end
+
+  def authorize(_conn, _protection, _scopes) do
+    raise ArgumentError, "dynamic scopes must be unique RFC 6749 scope-token strings"
+  end
+
+  defp validate_dynamic_scopes!(scopes) do
+    if not Scope.valid_list?(scopes) or Enum.uniq(scopes) != scopes do
+      raise ArgumentError, "dynamic scopes must be unique RFC 6749 scope-token strings"
     end
   end
 
@@ -141,19 +265,52 @@ defmodule AttestoMCP.Plug.ProtectResource do
   # insufficient_scope 403 points the client at metadata too. `put_new` means a
   # host-supplied `:www_authenticate` (already in the transport) wins.
   defp put_metadata_challenge(require_scopes, metadata_challenge) do
+    Map.update(
+      require_scopes,
+      :transport,
+      metadata_transport([], metadata_challenge),
+      &metadata_transport(&1, metadata_challenge)
+    )
+  end
+
+  defp metadata_transport(transport, metadata_challenge) do
     case Authenticate.metadata_www_authenticate(metadata_challenge) do
       nil ->
-        require_scopes
+        transport
 
       www_authenticate ->
-        Map.update(
-          require_scopes,
-          :transport,
-          [www_authenticate: www_authenticate],
-          &Keyword.put_new(&1, :www_authenticate, www_authenticate)
-        )
+        Keyword.put_new(transport, :www_authenticate, www_authenticate)
     end
   end
+
+  defp mark_boundary_authenticated(conn, %{boundary_id: boundary_id}) when is_binary(boundary_id),
+    do: Plug.Conn.put_private(conn, @boundary_private_key, boundary_id)
+
+  defp mark_boundary_authenticated(conn, _protection), do: conn
+
+  defp boundary_authenticated?(conn, %{boundary_id: boundary_id}) when is_binary(boundary_id),
+    do: conn.private[@boundary_private_key] == boundary_id
+
+  defp boundary_authenticated?(_conn, _protection), do: false
+
+  defp reject_unbound_connection(conn, protection) do
+    claims_key = Keyword.get(protection.scope_opts, :claims_key, :attesto_mcp_claims)
+
+    transport =
+      protection.scope_opts
+      |> Keyword.take([:send_error, :www_authenticate, :no_store])
+      |> metadata_transport(protection.metadata_challenge)
+
+    OAuthError.unauthorized(
+      conn,
+      scheme_of(conn.assigns[claims_key]),
+      "invalid_token",
+      Keyword.put(transport, :description, "request was not authenticated by this protected-resource boundary")
+    )
+  end
+
+  defp scheme_of(%{"cnf" => %{"jkt" => jkt}}) when is_binary(jkt), do: :dpop
+  defp scheme_of(_claims), do: :bearer
 
   defp rename_resource(opts) do
     case Keyword.fetch(opts, :resource) do

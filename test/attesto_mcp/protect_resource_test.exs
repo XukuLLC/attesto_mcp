@@ -494,6 +494,249 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     refute conn.halted
   end
 
+  describe "dynamic scope boundary" do
+    test "authenticates once and authorizes a scope selected after classification", %{config: config} do
+      token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+      protection = dynamic_protection(config)
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> ProtectResource.authenticate(protection)
+        |> ProtectResource.authorize(protection, [Scopes.tools_call()])
+
+      refute conn.halted
+      assert conn.assigns.attesto_mcp_claims["sub"] == "usr_123"
+      assert conn.assigns.attesto_mcp_scopes == [Scopes.tools_call()]
+    end
+
+    test "rejects a dynamically selected scope the authenticated token lacks", %{config: config} do
+      token = Factory.access_token(config, scopes: [Scopes.resources_read()])
+      protection = dynamic_protection(config)
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> ProtectResource.authenticate(protection)
+        |> ProtectResource.authorize(protection, [Scopes.tools_call()])
+
+      assert conn.halted
+      assert conn.status == 403
+      assert JSON.decode!(conn.resp_body)["error"] == "insufficient_scope"
+    end
+
+    test "halts on authentication failure before dynamic authorization", %{config: config} do
+      protection = dynamic_protection(config)
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> ProtectResource.authenticate(protection)
+        |> ProtectResource.authorize(protection, [Scopes.tools_call()])
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    end
+
+    test "an empty dynamic scope list still requires successful authentication", %{config: config} do
+      token = Factory.access_token(config, scopes: [])
+      protection = dynamic_protection(config)
+
+      authenticated =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> ProtectResource.authenticate(protection)
+        |> ProtectResource.authorize(protection, [])
+
+      refute authenticated.halted
+
+      unauthenticated =
+        :post
+        |> conn("/mcp")
+        |> ProtectResource.authorize(protection, [])
+
+      assert unauthenticated.halted
+      assert unauthenticated.status == 401
+      assert JSON.decode!(unauthenticated.resp_body)["error"] == "invalid_token"
+    end
+
+    test "pre-existing assigns cannot bypass the prepared authentication boundary", %{config: config} do
+      protection =
+        ProtectResource.prepare(
+          config: config,
+          htu: fn _conn -> Factory.htu() end,
+          resource: "/mcp",
+          scopes_key: :custom_scopes
+        )
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> assign(:custom_scopes, [Scopes.tools_call()])
+        |> assign(:attesto_mcp_claims, %{"sub" => "unverified"})
+        |> ProtectResource.authorize(protection, [Scopes.tools_call()])
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    end
+
+    test "authentication by one prepared boundary cannot authorize another", %{config: config} do
+      token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+      boundary_a = dynamic_protection(config)
+
+      boundary_b =
+        ProtectResource.prepare(
+          config: config,
+          htu: fn _conn -> Factory.htu() end,
+          resource: "/mcp",
+          step_up: [acr_values: ["phr"]]
+        )
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> ProtectResource.authenticate(boundary_a)
+        |> ProtectResource.authorize(boundary_b, [Scopes.tools_call()])
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    end
+
+    test "a later authentication call clears an earlier prepared-boundary binding", %{config: config} do
+      token = Factory.access_token(config, scopes: [Scopes.tools_call()])
+      prepared = dynamic_protection(config)
+
+      static =
+        ProtectResource.init(
+          config: config,
+          htu: fn _conn -> Factory.htu() end,
+          resource: "/mcp",
+          scopes: [Scopes.tools_call()]
+        )
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> ProtectResource.authenticate(prepared)
+        |> ProtectResource.authenticate(static)
+        |> ProtectResource.authorize(prepared, [Scopes.tools_call()])
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    end
+
+    test "rejects invalid RFC 6749 dynamic scope tokens before rendering headers", %{config: config} do
+      token = Factory.access_token(config, scopes: [Scopes.resources_read()])
+      protection = dynamic_protection(config)
+
+      authenticated =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> ProtectResource.authenticate(protection)
+
+      malformed = [
+        "tools call",
+        ~s(tools"call),
+        "tools\\call",
+        "tools\tcall",
+        "tools\r\ncall",
+        <<0>>,
+        "café"
+      ]
+
+      for scope <- malformed do
+        assert_raise ArgumentError, ~r/RFC 6749 scope-token/, fn ->
+          ProtectResource.authorize(authenticated, protection, [scope])
+        end
+      end
+    end
+
+    test "dynamic DPoP authentication verifies the proof only once", %{config: config} do
+      jwk = Factory.dpop_jwk()
+      {_unused, jkt} = Factory.dpop_proof("placeholder", jwk: jwk)
+      token = Factory.access_token(config, dpop_jkt: jkt, scopes: [Scopes.tools_call()])
+      {proof, ^jkt} = Factory.dpop_proof(token, jwk: jwk)
+      protection = dynamic_protection(config, replay_check: DPoPReplay.callback())
+
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "DPoP " <> token)
+        |> put_req_header("dpop", proof)
+        |> ProtectResource.authenticate(protection)
+        |> ProtectResource.authorize(protection, [Scopes.tools_call()])
+
+      refute conn.halted
+      assert conn.assigns.attesto_mcp_sender == %{binding: :dpop, jkt: jkt}
+    end
+
+    test "dynamic scope rejection carries the pinned metadata challenge", %{config: config} do
+      protection =
+        dynamic_protection(config,
+          base_url: "https://mcp.example.com",
+          resource_audience: :resource
+        )
+
+      token =
+        Factory.access_token(config,
+          audience: "https://mcp.example.com/mcp",
+          scopes: [Scopes.resources_read()]
+        )
+
+      conn =
+        :post
+        |> conn("http://10.0.0.5/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> ProtectResource.authenticate(protection)
+        |> ProtectResource.authorize(protection, [Scopes.tools_call()])
+
+      assert conn.halted
+      assert conn.status == 403
+      assert JSON.decode!(conn.resp_body)["error"] == "insufficient_scope"
+      assert [challenge] = get_resp_header(conn, "www-authenticate")
+      assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+      assert challenge =~ ~s(scope="mcp:tools:call")
+    end
+
+    test "rejects ambiguous or malformed dynamic boundary use", %{config: config} do
+      protection = dynamic_protection(config)
+
+      assert_raise ArgumentError, ~r/must call authenticate\/2 and authorize\/3/, fn ->
+        ProtectResource.call(conn(:post, "/mcp"), protection)
+      end
+
+      assert_raise ArgumentError, ~r/accepts dynamic scopes only/, fn ->
+        ProtectResource.prepare(config: config, scopes: [Scopes.tools_call()])
+      end
+
+      for malformed <- [[""], [Scopes.tools_call(), Scopes.tools_call()], [:tools], "mcp:tools:call"] do
+        assert_raise ArgumentError, ~r/dynamic scopes must be/, fn ->
+          ProtectResource.authorize(conn(:post, "/mcp"), protection, malformed)
+        end
+      end
+    end
+
+    test "prepare/1 is escape-safe" do
+      opts = [
+        config: &Factory.config/0,
+        resource: "/mcp",
+        base_url: "https://mcp.example.com"
+      ]
+
+      assert opts |> ProtectResource.prepare() |> Macro.escape()
+    end
+  end
+
   test "init/1 is escape-safe, so the plug works as a compile-time router pipeline plug" do
     # `plug_init_mode: :compile` (the prod / Phoenix router default) embeds the
     # `init/1` result via `Macro.escape`, which rejects closures. A generated
@@ -557,6 +800,19 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       )
 
     ProtectResource.call(conn, ProtectResource.init(opts))
+  end
+
+  defp dynamic_protection(config, opts \\ []) do
+    ProtectResource.prepare(
+      Keyword.merge(
+        [
+          config: config,
+          htu: fn _conn -> Factory.htu() end,
+          resource: "/mcp"
+        ],
+        opts
+      )
+    )
   end
 
   defp form_post(params) do

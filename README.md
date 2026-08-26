@@ -304,6 +304,36 @@ plug AttestoMCP.Plug.ProtectResource,
   scopes: [AttestoMCP.Scopes.tools_call()]
 ```
 
+When one MCP endpoint serves methods with different scope requirements, use
+the same boundary in two explicit phases. Authenticate before inspecting the
+bounded request envelope, derive the required scopes from the classified MCP
+method, then authorize before dispatch:
+
+```elixir
+protection =
+  AttestoMCP.Plug.ProtectResource.prepare(
+    config: &MyApp.Attesto.config/0,
+    replay_check: &MyApp.DPoPReplay.check_and_record/2,
+    resource: "/mcp",
+    resource_audience: :resource
+  )
+
+conn = AttestoMCP.Plug.ProtectResource.authenticate(conn, protection)
+
+if conn.halted do
+  conn
+else
+  scopes = MyApp.MCPScopes.for_method(classify_bounded_method(conn))
+  conn = AttestoMCP.Plug.ProtectResource.authorize(conn, protection, scopes)
+  if conn.halted, do: conn, else: MyApp.MCPServerPlug.call(conn, [])
+end
+```
+
+This verifies the token and any sender constraint once. `authorize/3` uses the
+verified Attesto assigns and an empty scope list means authenticated access,
+not public access. Calling a prepared boundary through the ordinary Plug
+`call/2` entry point raises instead of dispatching without authorization.
+
 After authentication, downstream code can read:
 
 - `conn.assigns.attesto_mcp_claims`
