@@ -1,9 +1,14 @@
 # Wiring an MCP server
 
-This guide shows the canonical end-to-end wiring for protecting an HTTP MCP
-server with `attesto_mcp`: mount the metadata discovery routes, protect the MCP
-endpoint with one plug, and require the scopes the endpoint needs. Every step is
-copy-pasteable.
+Starting a new Attesto-native server? Use
+[`attesto_mcp_server`](https://github.com/XukuLLC/attesto_mcp_server), whose
+Phoenix installer generates this boundary together with the supervised MCP
+server, protocol routes, and starter registrations.
+
+This lower-level guide is for an existing MCP transport or a deliberately
+custom server. It shows the end-to-end `attesto_mcp` wiring: mount the metadata
+discovery routes, protect the MCP endpoint with one plug, and require the scopes
+the endpoint needs. Every step is copy-pasteable.
 
 The pieces fit together so that the RFC 9728 `resource` identifier a client
 discovers and the `resource_metadata` challenge the server returns on a 401

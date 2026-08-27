@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "1.2.1"
+  @version "1.2.2"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -155,14 +155,14 @@ defmodule AttestoMCP.MixProject do
         Routing: [AttestoMCP.Router, AttestoMCP.MetadataController],
         Metadata: [AttestoMCP.Metadata],
         Scopes: [AttestoMCP.Scopes],
-        Anubis: [
+        Testing: [DPoPReplay, DPoPAssertions],
+        "Optional Anubis compatibility": [
           AttestoMCP.Anubis,
           AttestoMCP.Anubis.SessionStore.Ecto,
           Session,
           Horde,
           JSONSafe
-        ],
-        Testing: [DPoPReplay, DPoPAssertions]
+        ]
       ]
     ]
   end
@@ -173,6 +173,7 @@ defmodule AttestoMCP.MixProject do
       licenses: ["MIT"],
       links: %{
         "Changelog" => "https://hexdocs.pm/attesto_mcp/changelog.html",
+        "Complete MCP server" => "https://hexdocs.pm/attesto_mcp_server",
         "GitHub" => @url
       },
       files: ~w(lib guides LICENSE mix.exs README.md CHANGELOG.md)

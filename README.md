@@ -8,12 +8,15 @@
 
 OAuth resource-server helpers for HTTP MCP servers in Plug/Phoenix: protect the
 MCP endpoint, publish OAuth discovery metadata, verify Bearer/DPoP/mTLS access
-tokens, enforce scopes, and hand the verified identity to Anubis when your MCP
-server runs on Anubis.
+tokens, enforce scopes, and hand the verified identity to the server
+implementation.
 
-For a complete Attesto-native MCP server built on this package, see
-[`attesto_mcp_server`](https://github.com/XukuLLC/attesto_mcp_server). It
-supports MCP 2026-07-28 and 2025-11-25 over Streamable HTTP, plus stdio.
+For a new Attesto-native MCP server, start with
+[`attesto_mcp_server`](https://github.com/XukuLLC/attesto_mcp_server). It is the
+complete Apache-2.0 server built on this package, with MCP 2026-07-28 plus
+2025-11-25/2025-06-18 compatibility over Streamable HTTP and stdio, an
+opinionated Attesto authorization boundary, and an Igniter installer for
+Phoenix hosts.
 
 ## Why use this
 
@@ -33,107 +36,16 @@ boundary:
 - Put verified subject, client, scopes, and raw claims where downstream MCP code
   can read them.
 
-`attesto_mcp` packages that glue as Plug modules. You still bring the MCP server
-implementation and your app's policy.
+`attesto_mcp` packages that glue as Plug modules. Most applications should use
+them through `attesto_mcp_server`. Use this package directly when adapting an
+existing MCP transport or building a deliberately custom server boundary. The
+host still owns application authorization policy in either case.
 
-## If you use Anubis
-
-[Anubis](https://hex.pm/packages/anubis_mcp) validates authorization itself.
-`Anubis.Server.Authorization` covers RFC 6750 bearer tokens, RFC 9728 protected
-resource metadata, RFC 8707 audience validation, and RFC 7662 introspection,
-with a pluggable `Anubis.Server.Authorization.Validator`; it stores the verified
-claims in `Context.auth`, which is what `Frame.scopes/1`, `Frame.has_scope?/2`,
-and scope-aware tool visibility read from.
-
-`attesto_mcp` is the alternative when you want either of two things.
-
-The first is **sender-constrained** tokens — DPoP (RFC 9449) or mTLS
-certificate binding (RFC 8705) — so a stolen token is not enough to make a
-request. Those cannot be done from a validator, and not by oversight. The
-contract is
-
-```elixir
-@callback validate_token(token(), config()) :: {:ok, claims()} | {:error, reason()}
-```
-
-which receives the token and configuration and nothing else. A DPoP proof binds
-to the request method and URI and arrives in its own header; an mTLS binding
-needs the TLS peer certificate. Neither is reachable from that signature, so a
-sender-constrained check has to happen at the HTTP boundary, before the frame
-exists. That is where this package sits.
-
-The second is the verification engine. `attesto_mcp` performs its checks with
-`attesto`, the same engine behind an OpenID Certified authorization server:
-FAPI 2.0 Security Profile Final and FAPI 2.0 Message Signing Final among ten
-granted profiles, all verified against the OpenID Foundation conformance
-suites. Certification covers the OpenID Provider role rather than a resource
-server — the OpenID Foundation runs no RS programme — but the JWT, JWKS, DPoP
-and audience handling a resource server leans on is that same code, exercised
-by those suites.
-
-Run one or the other, not both. The wiring for this one:
-
-1. `AttestoMCP.Plug.ProtectResource` protects `/mcp` before the Anubis transport
-   handles the request.
-2. The auth plug assigns a neutral `conn.assigns.attesto_context` map containing
-   the verified subject, client ID, scopes, claims, confirmation claim, and
-   optional host principal.
-3. `AttestoMCP.Anubis.put_auth/1` projects that context into
-   `frame.context.auth`, the place Anubis expects it.
-
-```elixir
-pipeline :mcp_auth do
-  plug AttestoMCP.Plug.ProtectResource,
-    config: &MyApp.Attesto.config/0,
-    replay_check: &MyApp.DPoPReplay.check_and_record/2,
-    resource: "/mcp",
-    scopes: [AttestoMCP.Scopes.tools_call()]
-end
-
-def handle_request(request, frame) do
-  frame = AttestoMCP.Anubis.put_auth(frame)
-  # Anubis authorization helpers now see the verified subject/scopes/claims.
-end
-```
-
-Anubis's own authorization stays off in this arrangement — the request is
-already verified by the time the transport sees it, and `put_auth/1` hands the
-result over in the shape `Context.auth` expects, so the frame helpers work
-unchanged.
-
-What you get for that is DPoP proof verification with replay and nonce checks,
-mTLS certificate binding, protected-resource challenges, scope rejection
-responses, and the `frame.context.auth` projection, none of it hand-written. It
-does not add role, tenant, admin, or tool visibility policy; keep that in your
-app.
-
-`anubis_mcp` is optional. The bridge module compiles only when Anubis is
-present, so non-Anubis MCP servers do not take a hard dependency on it.
-
-### Clustered or persistent sessions (optional)
-
-Anubis already covers the common multi-node case itself:
-`Anubis.Server.Registry.PG` tracks session pids in a `:pg` scope shared across
-connected nodes and routes a request to the node holding the session, and
-`Anubis.Server.Session.Store.Redis` persists sessions across restarts. Reach for
-those first.
-
-Two optional adapters sit alongside them for hosts whose infrastructure points
-elsewhere (both compile-guarded, so an RS-only consumer pulls in neither):
-
-- `AttestoMCP.Anubis.SessionStore.Ecto` — a Postgres-backed
-  `Anubis.Server.Session.Store`, for hosts that would rather not run Redis for
-  this alone; Redis is the only store Anubis bundles. A client reconnects after
-  a node replacement with its initialized state restored. Wire it with
-  `mix attesto_mcp.install.sessions`.
-- `AttestoMCP.Anubis.Registry.Horde` — an `Anubis.Server.Registry` backed by
-  Horde's CRDT-backed name ownership. Cross-node routing is not what this adds;
-  `Registry.PG` already does that. What it adds is cluster-wide *uniqueness*:
-  `:pg` permits several pids to join one session group and returns whichever
-  comes first, while Horde makes a registered name resolve to a single owning
-  pid.
-
-See each module's docs for wiring details.
+Verification delegates to `attesto`, the same engine behind an OpenID
+Certified authorization server, including its certified FAPI 2.0 Security
+Profile and Message Signing profiles. Certification covers the OpenID Provider
+role rather than a resource server, but the JWT, JWKS, DPoP, mTLS, and audience
+handling used at this boundary is the same engine exercised by those suites.
 
 ## MCP authorization and metadata
 
@@ -150,9 +62,9 @@ This package provides builders for:
   via Attesto's authorization-server metadata builder.
 - Resource identifier handling through the explicit `:resource` value you pass.
 
-It intentionally avoids a hard dependency on a specific Elixir MCP SDK. Anubis
-gets a bridge because its frame authorization contract is widely used and small
-to support; the core auth boundary remains a normal Plug boundary.
+It intentionally avoids a hard dependency on a specific Elixir MCP SDK. The
+recommended `attesto_mcp_server` consumes the public boundary directly; the
+core remains a normal Plug boundary for custom and existing integrations.
 
 ### How clients identify themselves
 
@@ -230,8 +142,8 @@ verification, DPoP proof verification, mTLS certificate binding, scope algebra,
 and metadata builders.
 
 `attesto` is the protocol engine: JWT access tokens, DPoP, mTLS, PKCE, JWKS,
-discovery, and scopes. `attesto_mcp` reuses those checks and adds MCP-facing
-Plug and Anubis ergonomics.
+discovery, and scopes. `attesto_mcp` reuses those checks and adds the MCP-facing
+Plug boundary consumed by `attesto_mcp_server` and custom integrations.
 
 `attesto_phoenix` is the Phoenix/Ecto authorization-server layer: routes,
 controllers, client registration and CIMD, stores, and Phoenix-friendly
@@ -245,7 +157,7 @@ either here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 1.0"}
+    {:attesto_mcp, "~> 1.2"}
   ]
 end
 ```
@@ -446,6 +358,45 @@ with Attesto's lower-level option.
 If the server requires DPoP nonces, also pass `:nonce_check` and `:nonce_issue`.
 Nonce failures produce `use_dpop_nonce` with a fresh `DPoP-Nonce` header so the
 client can retry.
+
+## Optional Anubis compatibility
+
+New Attesto-native servers should use
+[`attesto_mcp_server`](https://github.com/XukuLLC/attesto_mcp_server). Existing
+Anubis applications can instead retain their transport and use the optional
+`AttestoMCP.Anubis` bridge. The dependency and bridge are compile-guarded, so
+other consumers do not pull Anubis into their runtime closure.
+
+Protect the HTTP endpoint with `AttestoMCP.Plug.ProtectResource`, leave the
+transport's separate authorization validator disabled, and project the already
+verified context into its frame:
+
+```elixir
+pipeline :mcp_auth do
+  plug AttestoMCP.Plug.ProtectResource,
+    config: &MyApp.Attesto.config/0,
+    replay_check: &MyApp.DPoPReplay.check_and_record/2,
+    resource: "/mcp",
+    scopes: [AttestoMCP.Scopes.tools_call()]
+end
+
+def handle_request(request, frame) do
+  frame = AttestoMCP.Anubis.put_auth(frame)
+  # The frame now carries the verified subject, scopes, and claims.
+end
+```
+
+The package also retains two optional infrastructure adapters for established
+Anubis deployments:
+
+- `AttestoMCP.Anubis.SessionStore.Ecto` provides PostgreSQL-backed session
+  persistence and can be wired with `mix attesto_mcp.install.sessions`.
+- `AttestoMCP.Anubis.Registry.Horde` provides cluster-wide unique session-name
+  ownership through Horde.
+
+See those modules for their complete operational contracts. They are
+compatibility integrations, not prerequisites for `attesto_mcp` or
+`attesto_mcp_server`.
 
 ## Security notes
 
