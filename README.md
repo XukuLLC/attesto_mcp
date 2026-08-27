@@ -11,6 +11,10 @@ MCP endpoint, publish OAuth discovery metadata, verify Bearer/DPoP/mTLS access
 tokens, enforce scopes, and hand the verified identity to Anubis when your MCP
 server runs on Anubis.
 
+For a complete Attesto-native MCP server built on this package, see
+[`attesto_mcp_server`](https://github.com/XukuLLC/attesto_mcp_server). It
+supports MCP 2026-07-28 and 2025-11-25 over Streamable HTTP, plus stdio.
+
 ## Why use this
 
 An MCP server library gives you tools, prompts, resources, and transport

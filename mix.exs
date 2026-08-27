@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "1.2.0"
+  @version "1.2.1"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
