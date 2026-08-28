@@ -15,7 +15,7 @@ defmodule AttestoMCP.MinimumConsumer.MixProject do
   defp deps do
     [
       {:attesto_mcp, path: "../..", override: true},
-      {:attesto, "== 1.3.0", override: true},
+      {:attesto, "== 1.12.2"},
       {:jose, "== 1.11.12", override: true},
       {:plug, "== 1.16.6", override: true},
       {:phoenix, "== 1.7.24", override: true}

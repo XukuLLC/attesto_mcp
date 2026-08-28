@@ -38,7 +38,6 @@ jobs:
           mix deps.get
 
       - name: Audit dependency advisories
-        if: ${{ matrix.lint }}
         run: mix hex.audit
 
       - name: Compile consumer (warnings as errors)
@@ -97,7 +96,11 @@ jobs:
           mix deps.get
 
       - name: Install Phoenix installer archive
-        run: mix archive.install hex phx_new --force
+        run: mix archive.install hex phx_new 1.8.8 --force
+
+      - name: Audit dependency advisories
+        if: ${{ matrix.lint }}
+        run: mix hex.audit
 
       - name: Compile (warnings as errors)
         run: mix compile --warnings-as-errors
