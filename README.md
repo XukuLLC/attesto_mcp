@@ -213,7 +213,7 @@ end
 
 scope "/" do
   pipe_through [:mcp_auth]
-  forward "/mcp", to: MyApp.MCPServerPlug
+  forward "/mcp", MyApp.MCPServerPlug
 end
 ```
 

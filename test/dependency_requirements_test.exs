@@ -20,6 +20,11 @@ defmodule AttestoMCP.DependencyRequirementsTest do
     refute_matches(requirement!(:anubis_mcp), ~w(1.6.99 3.0.0))
   end
 
+  test "JOSE admits the patched floor and rejects the next major" do
+    assert_matches(requirement!(:jose), ~w(1.11.12 1.99.0))
+    refute_matches(requirement!(:jose), ~w(1.11.11 2.0.0))
+  end
+
   test "Attesto supports the 1.x and 2.x lines and Postgrex uses its patched floor" do
     case dependency!(:attesto) do
       {:attesto, requirement} when is_binary(requirement) ->

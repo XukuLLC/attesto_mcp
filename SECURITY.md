@@ -6,7 +6,7 @@ Please report security vulnerabilities **privately**. Do not open a public
 issue, pull request, or discussion for a suspected security problem.
 
 Use GitHub's private vulnerability reporting for this repository:
-https://github.com/neilberkman/attesto_mcp/security/advisories/new
+https://github.com/XukuLLC/attesto_mcp/security/advisories/new
 
 (From the repository's **Security** tab, choose **Report a vulnerability**.)
 

@@ -47,6 +47,8 @@ defmodule AttestoMCP.MixProject do
   defp deps do
     [
       attesto_dep(),
+      # Required because the shipped public test helpers call JOSE directly.
+      {:jose, ">= 1.11.12 and < 2.0.0"},
       {:plug, "~> 1.16.6 or ~> 1.17.4 or ~> 1.18.5 or ~> 1.19.5 or >= 1.20.3 and < 2.0.0"},
 
       # Optional: only needed by AttestoMCP.Router and AttestoMCP.MetadataController.
