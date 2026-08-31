@@ -9,7 +9,7 @@ defmodule AttestoMCP.Anubis.SessionStore.EctoTest do
   `Anubis.Server.Session.Store` adapter. Tagged `:ecto` so the suite runs only
   when a SQL backend is available.
   """
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias AttestoMCP.Anubis.SessionStore.Ecto, as: Store
   alias AttestoMCP.Anubis.SessionStore.EctoTest.BareStruct
@@ -19,7 +19,14 @@ defmodule AttestoMCP.Anubis.SessionStore.EctoTest do
   @moduletag :ecto
 
   setup do
+    # Igniter's synthetic Phoenix project setup can leave a host-style
+    # `:anubis_mcp` session-store config in the VM. Pin this test module to its
+    # real repo so the adapter exercises SQL rather than a fictional Test.Repo.
+    Application.put_env(:anubis_mcp, :session_store, repo: TestRepo)
+
     :ok = Sandbox.checkout(TestRepo)
+
+    on_exit(fn -> Application.delete_env(:anubis_mcp, :session_store) end)
   end
 
   defp sid, do: "sess-#{System.unique_integer([:positive])}"

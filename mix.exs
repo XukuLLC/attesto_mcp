@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "1.2.2"
+  @version "1.3.0"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -103,21 +103,16 @@ defmodule AttestoMCP.MixProject do
   # via `ATTESTO_PATH=1` (and the checkout exists); otherwise the published Hex
   # package. This is gated on the env var, not just `File.dir?`, so `mix
   # hex.publish` (which runs in :dev with the sibling on disk) resolves the Hex
-  # constraint rather than a path dep, which cannot be packaged. Requires
-  # Attesto 1.2.5 supplies strict trusted RFC 8707 audience policy, the
-  # advisory-safe Plug compatibility ranges, and the JOSE 1.11.12 floor needed
-  # for both Erlang/OTP 28 EC key compatibility and correct nil-to-JSON-null
-  # encoding, plus the
-  # Static keystore signing_alg/kid labelling fix, RFC 9470 step-up (the
-  # `:step_up` plug option and
-  # `Attesto.Plug.OAuthError.insufficient_user_authentication/4`), and the
-  # `Attesto.Plug.{OAuthError,RequireScopes}` transport hooks this MCP layer
-  # delegates to.
+  # constraint rather than a path dep, which cannot be packaged. The lower
+  # bound supplies the Attesto transport hooks and hardened token,
+  # DPoP, parser, key, and wallet verification paths this MCP boundary delegates
+  # to. Attesto 2.x changes authorization-server storage contracts, not these
+  # resource-server APIs.
   defp attesto_dep do
     if System.get_env("ATTESTO_PATH") in ~w(1 true) and File.dir?("../attesto") do
       {:attesto, path: "../attesto", override: true}
     else
-      {:attesto, ">= 1.12.2 and < 2.0.0"}
+      {:attesto, ">= 1.12.2 and < 3.0.0"}
     end
   end
 
@@ -143,10 +138,18 @@ defmodule AttestoMCP.MixProject do
       main: "readme",
       source_ref: "v#{@version}",
       source_url: @url,
-      extras: ["README.md", "guides/mcp_wiring.md", "guides/proxy_origin.md", "CHANGELOG.md", "LICENSE"],
+      extras: [
+        "README.md",
+        "guides/mcp_wiring.md",
+        "guides/proxy_origin.md",
+        "CHANGELOG.md",
+        "CONTRIBUTING.md",
+        "LICENSE"
+      ],
       groups_for_extras: [
         Guides: ~r/guides\/.?/,
         Changelog: ~r/CHANGELOG\.md/,
+        Contributing: ~r/CONTRIBUTING\.md/,
         License: ~r/LICENSE/
       ],
       groups_for_modules: [
@@ -176,7 +179,7 @@ defmodule AttestoMCP.MixProject do
         "Complete MCP server" => "https://hexdocs.pm/attesto_mcp_server",
         "GitHub" => @url
       },
-      files: ~w(lib guides LICENSE mix.exs README.md CHANGELOG.md)
+      files: ~w(lib guides LICENSE mix.exs README.md CHANGELOG.md CONTRIBUTING.md)
     ]
   end
 end

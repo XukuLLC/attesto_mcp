@@ -11,8 +11,19 @@ MCP endpoint, publish OAuth discovery metadata, verify Bearer/DPoP/mTLS access
 tokens, enforce scopes, and hand the verified identity to the server
 implementation.
 
+The Attesto family also includes:
+
+- [`attesto`](https://hex.pm/packages/attesto) — the transport-neutral OAuth,
+  OIDC, FAPI, DPoP, and mTLS engine beneath this package.
+- [`attesto_phoenix`](https://hex.pm/packages/attesto_phoenix) — the
+  batteries-included Phoenix/Ecto authorization server built on `attesto`.
+- [`attesto_client`](https://hex.pm/packages/attesto_client) — OAuth, OIDC,
+  and FAPI client flows and verification.
+- [`attesto_mcp_server`](https://hex.pm/packages/attesto_mcp_server) — the
+  batteries-included authenticated Model Context Protocol server.
+
 For a new Attesto-native MCP server, start with
-[`attesto_mcp_server`](https://github.com/XukuLLC/attesto_mcp_server). It is the
+[`attesto_mcp_server`](https://hex.pm/packages/attesto_mcp_server). It is the
 complete Apache-2.0 server built on this package, with MCP 2026-07-28 plus
 2025-11-25/2025-06-18 compatibility over Streamable HTTP and stdio, an
 opinionated Attesto authorization boundary, and an Igniter installer for
@@ -41,7 +52,8 @@ them through `attesto_mcp_server`. Use this package directly when adapting an
 existing MCP transport or building a deliberately custom server boundary. The
 host still owns application authorization policy in either case.
 
-Verification delegates to `attesto`, the same engine behind an OpenID
+Verification delegates to [`attesto`](https://hex.pm/packages/attesto), the
+same engine behind an OpenID
 Certified authorization server, including its certified FAPI 2.0 Security
 Profile and Message Signing profiles. Certification covers the OpenID Provider
 role rather than a resource server, but the JWT, JWKS, DPoP, mTLS, and audience
@@ -157,7 +169,7 @@ either here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 1.2"}
+    {:attesto_mcp, "~> 1.3"}
   ]
 end
 ```
@@ -362,7 +374,7 @@ client can retry.
 ## Optional Anubis compatibility
 
 New Attesto-native servers should use
-[`attesto_mcp_server`](https://github.com/XukuLLC/attesto_mcp_server). Existing
+[`attesto_mcp_server`](https://hex.pm/packages/attesto_mcp_server). Existing
 Anubis applications can instead retain their transport and use the optional
 `AttestoMCP.Anubis` bridge. The dependency and bridge are compile-guarded, so
 other consumers do not pull Anubis into their runtime closure.
@@ -397,6 +409,12 @@ Anubis deployments:
 See those modules for their complete operational contracts. They are
 compatibility integrations, not prerequisites for `attesto_mcp` or
 `attesto_mcp_server`.
+
+## Status
+
+A stable `1.x` release: the public API follows [semantic versioning](https://semver.org/) —
+minor and patch releases are backward-compatible, and breaking changes wait for
+a new major version. Pin to `~> 1.3`.
 
 ## Security notes
 
