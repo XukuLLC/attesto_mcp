@@ -15,6 +15,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   resolution can select either supported Attesto major line. No MCP application
   migration is required; source checkouts may opt into the coordinated Attesto
   2 path with `ATTESTO_PATH=1`.
+- Keep the optional Anubis compatibility bridge available with Anubis MCP 1.x
+  and 2.x (`>= 1.7.0 and < 3.0.0`).
 
 ## [1.2.2] - 2026-08-27
 

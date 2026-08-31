@@ -65,7 +65,7 @@ defmodule AttestoMCP.MixProject do
       # never compiles it and never pulls anubis_mcp into its closure. Declared
       # here (not `only:`) so it is loadable when attesto_mcp builds the bridge
       # and its tests.
-      {:anubis_mcp, ">= 1.7.0 and < 2.0.0", optional: true},
+      {:anubis_mcp, ">= 1.7.0 and < 3.0.0", optional: true},
 
       # Optional: only needed by `AttestoMCP.Anubis.SessionStore.Ecto` (and its
       # `AttestoMCP.Anubis.Session` schema), a Postgres-backed

@@ -16,8 +16,8 @@ defmodule AttestoMCP.DependencyRequirementsTest do
     assert_matches(requirement!(:igniter), ~w(0.6.0 0.99.0))
     refute_matches(requirement!(:igniter), ~w(0.5.99 1.0.0))
 
-    assert_matches(requirement!(:anubis_mcp), ~w(1.7.0 1.99.0))
-    refute_matches(requirement!(:anubis_mcp), ~w(1.6.99 2.0.0))
+    assert_matches(requirement!(:anubis_mcp), ~w(1.7.0 1.99.0 2.0.0 2.99.0))
+    refute_matches(requirement!(:anubis_mcp), ~w(1.6.99 3.0.0))
   end
 
   test "Attesto supports the 1.x and 2.x lines and Postgrex uses its patched floor" do
