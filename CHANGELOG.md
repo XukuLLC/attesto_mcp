@@ -4,6 +4,19 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Keep Hex dependency declarations during package tasks even when
+  `ATTESTO_PATH` is inherited from a source-development shell.
+
+### Security
+
+- Exclude vulnerable Igniter releases and require patched Mint whenever the
+  optional installer/HTTP dependency graph includes it. Update the lockfile
+  to patched versions without adding them to neutral runtime consumers.
+
 ## [1.3.0] - 2026-08-31
 
 ### Changed

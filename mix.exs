@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "1.3.0"
+  @version "1.3.1"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -59,7 +59,8 @@ defmodule AttestoMCP.MixProject do
       # Optional: only needed by the `mix attesto_mcp.install` Igniter task.
       # Library consumers never call the installer at runtime, so the dependency
       # stays out of their closure unless they opt into the codegen tooling.
-      {:igniter, ">= 0.6.0 and < 1.0.0", optional: true},
+      {:igniter, ">= 0.6.0 and < 0.8.1 or >= 0.8.4 and < 1.0.0", optional: true},
+      {:mint, ">= 1.10.2 and < 2.0.0", optional: true},
 
       # Optional: only needed by `AttestoMCP.Anubis`, the frame-auth bridge for
       # hosts running an Anubis MCP server. The module is compile-guarded on
@@ -111,7 +112,8 @@ defmodule AttestoMCP.MixProject do
   # to. Attesto 2.x changes authorization-server storage contracts, not these
   # resource-server APIs.
   defp attesto_dep do
-    if System.get_env("ATTESTO_PATH") in ~w(1 true) and File.dir?("../attesto") do
+    if System.get_env("ATTESTO_PATH") in ~w(1 true) and File.dir?("../attesto") and
+         not Enum.any?(System.argv(), &(&1 in ["hex.build", "hex.publish"])) do
       {:attesto, path: "../attesto", override: true}
     else
       {:attesto, ">= 1.12.2 and < 3.0.0"}
