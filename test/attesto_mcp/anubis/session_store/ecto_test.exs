@@ -3,6 +3,14 @@ defmodule AttestoMCP.Anubis.SessionStore.EctoTest.BareStruct do
   defstruct [:x]
 end
 
+defmodule AttestoMCP.Anubis.SessionStore.EctoTest.FailingRepo do
+  @moduledoc false
+
+  def insert(_changeset, _opts) do
+    raise "private-persistence-sentinel"
+  end
+end
+
 defmodule AttestoMCP.Anubis.SessionStore.EctoTest do
   @moduledoc """
   Behaviour-conformance tests for the Postgres-backed
@@ -13,6 +21,7 @@ defmodule AttestoMCP.Anubis.SessionStore.EctoTest do
 
   alias AttestoMCP.Anubis.SessionStore.Ecto, as: Store
   alias AttestoMCP.Anubis.SessionStore.EctoTest.BareStruct
+  alias AttestoMCP.Anubis.SessionStore.EctoTest.FailingRepo
   alias AttestoMCP.TestRepo
   alias Ecto.Adapters.SQL.Sandbox
 
@@ -43,6 +52,21 @@ defmodule AttestoMCP.Anubis.SessionStore.EctoTest do
     assert :ok = Store.save(id, %{"user" => %BareStruct{x: 1}, "pid" => self(), "keep" => "v"}, [])
     assert {:ok, state} = Store.load(id, [])
     assert state == %{"keep" => "v"}
+  end
+
+  test "save does not expose a session id or persistence exception" do
+    id = "private-session-id"
+    Application.put_env(:anubis_mcp, :session_store, repo: FailingRepo)
+
+    log =
+      ExUnit.CaptureLog.capture_log(fn ->
+        assert {:error, :persistence_failed} = Store.save(id, %{"secret" => "private-state"}, [])
+      end)
+
+    assert log =~ "MCP session persistence failed"
+    refute log =~ id
+    refute log =~ "private-persistence-sentinel"
+    refute log =~ "private-state"
   end
 
   test "save upserts on session_id (last write wins)" do

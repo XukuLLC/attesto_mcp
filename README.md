@@ -169,7 +169,7 @@ either here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 1.3.1"}
+    {:attesto_mcp, "~> 1.3.2"}
   ]
 end
 ```
@@ -414,10 +414,14 @@ compatibility integrations, not prerequisites for `attesto_mcp` or
 
 A stable `1.x` release: the public API follows [semantic versioning](https://semver.org/) —
 minor and patch releases are backward-compatible, and breaking changes wait for
-a new major version. Pin to `~> 1.3.1`.
+a new major version. Pin to `~> 1.3.2`.
 
 ## Security notes
 
+- For the coordinated security update, deploy AttestoMCP 1.3.2 with Attesto
+  2.2.2 or later in the 2.x line. Delegated core JOSE and credential verification
+  receives the new core hardening only with that update. The existing Attesto
+  1.x compatibility range remains available.
 - Use HTTPS for HTTP MCP servers.
 - Validate token audience/resource identifiers for the exact MCP endpoint. When
   one server fronts more than one resource, enable `resource_audience: :resource`

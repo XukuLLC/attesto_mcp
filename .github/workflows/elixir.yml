@@ -60,6 +60,21 @@ jobs:
             otp: "28.3"
             lint: true
 
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: attesto_mcp_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     env:
       MIX_ENV: test
 
@@ -106,7 +121,7 @@ jobs:
         run: mix compile --warnings-as-errors
 
       - name: Run tests
-        run: mix test --trace
+        run: mix test --include ecto --trace
 
       - name: Check formatting
         if: ${{ matrix.lint }}
@@ -123,7 +138,7 @@ jobs:
         run: mix docs
 
   attesto-2-hex:
-    name: Published Attesto 2 compatibility
+    name: Published Attesto 2.2.2 security compatibility
     runs-on: ubuntu-latest
 
     env:
@@ -149,10 +164,10 @@ jobs:
       - name: Compile against published Attesto 2
         run: mix compile --warnings-as-errors
 
-      - name: Assert Attesto 2 resolution
+      - name: Assert published hardened Attesto dependency
         run: >-
           mix run --no-compile -e 'version = Application.spec(:attesto, :vsn) |> to_string();
-          unless Version.match?(version, ">= 2.0.0 and < 3.0.0"), do: System.halt(1)'
+          unless Version.match?(version, ">= 2.2.2 and < 3.0.0"), do: System.halt(1)'
 
       - name: Run tests against published Attesto 2
         run: mix test --trace

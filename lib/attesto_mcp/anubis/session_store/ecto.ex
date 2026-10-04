@@ -92,16 +92,15 @@ if Code.ensure_loaded?(Anubis.Server.Session.Store) and Code.ensure_loaded?(Ecto
       )
       |> case do
         {:ok, _session} -> :ok
-        {:error, changeset} -> {:error, changeset}
+        {:error, _changeset} -> persistence_failure()
       end
     rescue
       # The sanitizer above should make the insert encodable, but Anubis only
       # logs-and-continues on `{:error, _}` while the session process dies on a
       # raise. A bare rescue is intentional: persisting a session must never take
       # down the connection, whatever the driver/Ecto raises.
-      exception ->
-        Logger.error("MCP session persist failed for #{inspect(session_id)}: #{inspect(exception)}")
-        {:error, exception}
+      _exception ->
+        persistence_failure()
     end
 
     @impl Store
@@ -189,6 +188,11 @@ if Code.ensure_loaded?(Anubis.Server.Session.Store) and Code.ensure_loaded?(Ecto
     end
 
     # ----- internal -----
+
+    defp persistence_failure do
+      Logger.error("MCP session persistence failed")
+      {:error, :persistence_failed}
+    end
 
     defp ttl_ms(opts), do: Keyword.get(opts, :ttl) || config_ttl_ms()
 
