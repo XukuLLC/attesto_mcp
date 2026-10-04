@@ -169,7 +169,7 @@ either here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 1.3"}
+    {:attesto_mcp, "~> 1.3.1"}
   ]
 end
 ```
@@ -414,7 +414,7 @@ compatibility integrations, not prerequisites for `attesto_mcp` or
 
 A stable `1.x` release: the public API follows [semantic versioning](https://semver.org/) —
 minor and patch releases are backward-compatible, and breaking changes wait for
-a new major version. Pin to `~> 1.3`.
+a new major version. Pin to `~> 1.3.1`.
 
 ## Security notes
 
