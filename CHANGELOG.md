@@ -21,6 +21,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   reject ambiguous, duplicate, or wildcard route-scope requirements. Resource
   identifiers must be absolute HTTP(S) URIs and authorization-server identifiers
   must use HTTPS.
+- Refresh the development and CI dependency lock to Decimal 3.2.0, which fixes
+  the unbounded-allocation advisory affecting Decimal 3.1.1.
 
 ### Fixed
 
