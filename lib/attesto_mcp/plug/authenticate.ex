@@ -210,14 +210,13 @@ defmodule AttestoMCP.Plug.Authenticate do
     sender = sender_context(claims)
     scopes = scopes(claims)
 
-    # Resolve the optional principal BEFORE assigning, so a principal-callback
-    # rejection halts without leaving partial context on the conn.
+    # Resolve the optional principal before assigning the verified context.
     case resolve_principal(opts, claims, sender) do
       {:ok, principal} ->
         conn
         |> assign(Keyword.get(opts, :scopes_key, @scopes_key), scopes)
         |> assign(Keyword.get(opts, :sender_key, @sender_key), sender)
-        |> maybe_assign_principal(opts, principal)
+        |> assign(Keyword.get(opts, :principal_key, @principal_key), principal)
         |> assign(Keyword.get(opts, :context_key, @context_key), context(claims, scopes, principal))
 
       :error ->
@@ -233,15 +232,10 @@ defmodule AttestoMCP.Plug.Authenticate do
       callback ->
         case invoke(callback, [claims, sender]) do
           {:ok, principal} -> {:ok, principal}
-          {:error, _reason} -> :error
+          _rejected -> :error
         end
     end
   end
-
-  defp maybe_assign_principal(conn, _opts, nil), do: conn
-
-  defp maybe_assign_principal(conn, opts, principal),
-    do: assign(conn, Keyword.get(opts, :principal_key, @principal_key), principal)
 
   # The canonical cross-plug auth context, shaped identically to
   # `AttestoPhoenix.Plug.Authenticate`'s `:attesto_context` so a single
@@ -271,13 +265,19 @@ defmodule AttestoMCP.Plug.Authenticate do
 
       metadata_url = metadata_url_resolver(opts) ->
         fn conn, challenge ->
-          put_resp_header(conn, "www-authenticate", Metadata.append_resource_metadata(challenge, metadata_url.(conn)))
+          rendered = render_metadata_challenge(challenge, metadata_url.(conn))
+          put_resp_header(conn, "www-authenticate", rendered)
         end
 
       true ->
         nil
     end
   end
+
+  defp render_metadata_challenge(challenge, url) when is_binary(url) and url != "",
+    do: Metadata.append_resource_metadata(challenge, url)
+
+  defp render_metadata_challenge(challenge, _invalid_url), do: challenge
 
   defp core_opts(opts, claims_key) do
     opts
@@ -307,23 +307,25 @@ defmodule AttestoMCP.Plug.Authenticate do
   end
 
   defp metadata_url_resolver(opts) do
-    case Keyword.get(opts, :resource_metadata_url) do
-      url when is_binary(url) ->
-        fn _conn -> url end
-
-      fun when is_function(fun, 1) ->
-        fun
-
-      {module, fun} when is_atom(module) and is_atom(fun) ->
-        fn conn -> apply(module, fun, [conn]) end
-
-      {module, fun, args} when is_atom(module) and is_atom(fun) and is_list(args) ->
-        fn conn -> apply(module, fun, [conn | args]) end
-
-      _ ->
-        metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
-    end
+    opts
+    |> Keyword.get(:resource_metadata_url)
+    |> metadata_url_resolver(opts)
   end
+
+  defp metadata_url_resolver(url, _opts) when is_binary(url) and url != "", do: fn _conn -> url end
+
+  defp metadata_url_resolver("", opts), do: metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
+
+  defp metadata_url_resolver(fun, opts) when is_function(fun, 1), do: validated_metadata_url(fun, opts)
+
+  defp metadata_url_resolver({module, fun}, opts) when is_atom(module) and is_atom(fun),
+    do: validated_metadata_url(fn conn -> apply(module, fun, [conn]) end, opts)
+
+  defp metadata_url_resolver({module, fun, args}, opts) when is_atom(module) and is_atom(fun) and is_list(args),
+    do: validated_metadata_url(fn conn -> apply(module, fun, [conn | args]) end, opts)
+
+  defp metadata_url_resolver(_invalid, opts),
+    do: metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
 
   # The challenge URL must agree with the served metadata `resource`, so resolve
   # its origin the same way `AttestoMCP.Metadata` does: a pinned `:base_url` /
@@ -334,6 +336,18 @@ defmodule AttestoMCP.Plug.Authenticate do
   end
 
   defp metadata_url_from_resource_path(_path, _opts), do: nil
+
+  defp validated_metadata_url(callback, opts) do
+    fallback = metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
+
+    fn conn ->
+      case callback.(conn) do
+        url when is_binary(url) and url != "" -> url
+        _invalid when is_function(fallback, 1) -> fallback.(conn)
+        _invalid -> nil
+      end
+    end
+  end
 
   defp scopes(%{"scope" => scope}) when is_binary(scope), do: String.split(scope, ~r/\s+/, trim: true)
   defp scopes(_claims), do: []

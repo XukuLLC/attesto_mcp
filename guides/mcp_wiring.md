@@ -32,6 +32,19 @@ defmodule MyApp.Attesto do
 end
 ```
 
+The optional installer requires this module so it cannot generate a pipeline
+that fails every request:
+
+```bash
+mix attesto_mcp.install \
+  --config-module MyApp.Attesto \
+  --resource-path /mcp \
+  --scopes mcp:tools:call
+```
+
+Pass `--config-function another_name` when the zero-arity function is not
+`config/0`; the generated pipeline uses an escape-safe MFA tuple.
+
 ## 2. DPoP replay protection
 
 DPoP proof replay protection is required for protected-resource requests. Wire a

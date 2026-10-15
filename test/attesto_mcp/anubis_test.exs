@@ -9,6 +9,7 @@ defmodule AttestoMCP.AnubisTest do
   # A verified `:attesto_context`, shaped exactly as the auth plug assigns it
   # (`:scope` is the granted scopes as a LIST).
   alias Anubis.Server.Frame
+  alias AttestoMCP.Anubis.SessionOwnerMismatchError
 
   defp context do
     %{
@@ -19,6 +20,7 @@ defmodule AttestoMCP.AnubisTest do
         "sub" => "oc_user-123",
         "client_id" => "client-abc",
         "scope" => "tools:read tools:write",
+        "iss" => "https://issuer.example",
         "aud" => "https://api.example.com",
         "exp" => 1_234_567_890,
         "iat" => 1_234_567_800
@@ -94,6 +96,93 @@ defmodule AttestoMCP.AnubisTest do
 
       once = AttestoMCP.Anubis.put_auth(frame)
       assert AttestoMCP.Anubis.put_auth(once) == once
+    end
+
+    test "projects a JSON-restored string-keyed context" do
+      string_context =
+        context()
+        |> JSON.encode!()
+        |> JSON.decode!()
+
+      frame = frame_with(%{"attesto_context" => string_context})
+      projected = AttestoMCP.Anubis.put_auth(frame)
+
+      assert projected.context.auth.sub == "oc_user-123"
+      assert projected.context.auth.client_id == "client-abc"
+      assert projected.context.auth.scopes == ["tools:read", "tools:write"]
+      assert projected.context.auth.raw_claims["iss"] == "https://issuer.example"
+    end
+
+    test "supports a custom atom context key" do
+      frame = frame_with(%{verified_identity: context()})
+
+      auth = AttestoMCP.Anubis.put_auth(frame, context_key: :verified_identity).context.auth
+
+      assert auth.sub == "oc_user-123"
+      assert auth.client_id == "client-abc"
+    end
+
+    test "rejects a non-atom custom context key" do
+      frame = frame_with(%{attesto_context: context()})
+
+      assert_raise ArgumentError, ~r/context_key/, fn ->
+        AttestoMCP.Anubis.put_auth(frame, context_key: "attesto_context")
+      end
+    end
+
+    test "binds the session to issuer, subject, and client and accepts the same owner" do
+      first = frame_with(%{attesto_context: context()}) |> AttestoMCP.Anubis.put_auth()
+      next = %{first | context: %{first.context | auth: nil}}
+
+      assert AttestoMCP.Anubis.put_auth(next).context.auth.sub == "oc_user-123"
+
+      assert first.assigns.attesto_mcp_session_owner == %{
+               "iss" => "https://issuer.example",
+               "sub" => "oc_user-123",
+               "client_id" => "client-abc"
+             }
+    end
+
+    test "rejects a different issuer, subject, or OAuth client on an owner-bound session" do
+      first = frame_with(%{attesto_context: context()}) |> AttestoMCP.Anubis.put_auth()
+
+      mismatches = [
+        put_in(context(), [:claims, "iss"], "https://other-issuer.example"),
+        Map.put(context(), :subject, "other-user"),
+        Map.put(context(), :client_id, "other-client")
+      ]
+
+      for caller <- mismatches do
+        next = Map.update!(first, :assigns, &Map.put(&1, :attesto_context, caller))
+
+        assert_raise SessionOwnerMismatchError, fn ->
+          AttestoMCP.Anubis.put_auth(next)
+        end
+      end
+    end
+
+    test "compares an owner restored with string keys" do
+      owner = %{
+        "iss" => "https://issuer.example",
+        "sub" => "oc_user-123",
+        "client_id" => "client-abc"
+      }
+
+      frame = frame_with(%{"attesto_context" => context(), "attesto_mcp_session_owner" => owner})
+
+      assert AttestoMCP.Anubis.put_auth(frame).context.auth.sub == "oc_user-123"
+    end
+
+    test "fails closed when the verified context has no subject or OAuth client" do
+      ctx =
+        context()
+        |> Map.put(:subject, nil)
+        |> Map.put(:client_id, nil)
+        |> Map.update!(:claims, &Map.drop(&1, ["sub", "client_id"]))
+
+      assert_raise SessionOwnerMismatchError, ~r/neither a subject nor an OAuth client/, fn ->
+        frame_with(%{attesto_context: ctx}) |> AttestoMCP.Anubis.put_auth()
+      end
     end
 
     test "tolerates a context with no raw claims (aud/exp/iat nil, raw_claims empty)" do

@@ -156,6 +156,38 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     assert_receive {:principal, "usr_123", %{binding: :bearer}}
   end
 
+  test "a nil principal is assigned explicitly so a prior session value is cleared", %{config: config} do
+    token = Factory.access_token(config)
+
+    conn =
+      :post
+      |> conn("/mcp")
+      |> assign(:attesto_mcp_principal, %{stale: true})
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> authenticate(config, principal: fn _claims, _sender -> {:ok, nil} end)
+
+    refute conn.halted
+    assert Map.has_key?(conn.assigns, :attesto_mcp_principal)
+    assert conn.assigns.attesto_mcp_principal == nil
+  end
+
+  test "every malformed principal callback result is a generic 401", %{config: config} do
+    token = Factory.access_token(config)
+
+    for result <- [:error, nil, :unexpected, {:error, "private detail"}, {:ok}] do
+      conn =
+        :post
+        |> conn("/mcp")
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> authenticate(config, principal: fn _claims, _sender -> result end)
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+      refute conn.resp_body =~ "private detail"
+    end
+  end
+
   test "custom error renderer is used", %{config: config} do
     send_error = fn conn, status, body ->
       conn
@@ -199,6 +231,58 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/user")
   end
 
+  test "blank resource metadata URL is absent unless a resource path can derive it", %{config: config} do
+    without_path =
+      :post
+      |> conn("https://mcp.example.com/mcp")
+      |> authenticate(config, resource_metadata_url: "")
+
+    assert [challenge] = get_resp_header(without_path, "www-authenticate")
+    refute challenge =~ "resource_metadata="
+
+    with_path =
+      :post
+      |> conn("https://mcp.example.com/mcp")
+      |> authenticate(config, resource_metadata_url: "", resource_path: "/mcp")
+
+    assert [challenge] = get_resp_header(with_path, "www-authenticate")
+    assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+  end
+
+  test "invalid resource metadata callback values fall back safely", %{config: config} do
+    for invalid <- [nil, "", 123, %{}] do
+      with_path =
+        :post
+        |> conn("https://mcp.example.com/mcp")
+        |> authenticate(config,
+          resource_metadata_url: fn _conn -> invalid end,
+          resource_path: "/mcp"
+        )
+
+      assert [challenge] = get_resp_header(with_path, "www-authenticate")
+      assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+
+      without_path =
+        :post
+        |> conn("https://mcp.example.com/mcp")
+        |> authenticate(config, resource_metadata_url: fn _conn -> invalid end)
+
+      assert [challenge] = get_resp_header(without_path, "www-authenticate")
+      refute challenge =~ "resource_metadata="
+    end
+
+    via_mfa =
+      :post
+      |> conn("https://mcp.example.com/mcp")
+      |> authenticate(config,
+        resource_metadata_url: {__MODULE__, :metadata_url_result, [nil]},
+        resource_path: "/mcp"
+      )
+
+    assert [challenge] = get_resp_header(via_mfa, "www-authenticate")
+    assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+  end
+
   test "direct authentication enforces a literal resource audience", %{config: config} do
     resource = "https://mcp.example.com/mcp/reports"
     token = Factory.access_token(config, audience: resource)
@@ -239,6 +323,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
   end
 
   def metadata_url(_conn), do: "https://pinned.example/.well-known/oauth-protected-resource/mcp"
+  def metadata_url_result(_conn, result), do: result
 
   test "a custom :www_authenticate is a total override - the generated resource_metadata is suppressed", %{
     config: config

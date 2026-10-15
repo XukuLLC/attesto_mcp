@@ -10,7 +10,7 @@ defmodule Mix.Tasks.AttestoMcp.Install.Docs do
   def short_doc, do: "Scaffolds an MCP protected resource into a Phoenix application"
 
   @spec example() :: String.t()
-  def example, do: "mix attesto_mcp.install --resource-path /mcp --scopes mcp:use"
+  def example, do: "mix attesto_mcp.install --config-module MyApp.Attesto --resource-path /mcp --scopes mcp:use"
 
   @spec long_doc() :: String.t()
   def long_doc do
@@ -48,6 +48,11 @@ defmodule Mix.Tasks.AttestoMcp.Install.Docs do
 
     ## Options
 
+    * `--config-module` - required module that returns the Attesto configuration,
+      for example `MyApp.Attesto`.
+    * `--config-function` - zero-arity function on `--config-module`; defaults
+      to `config`. The generated plug receives the escape-safe MFA
+      `{MyApp.Attesto, :config}`.
     * `--resource-path` - the path component of the protected resource being
       served, for example `/mcp` (RFC 9728 Section 3.1). The metadata endpoint is
       mounted at `/.well-known/oauth-protected-resource<resource-path>` and the
@@ -92,7 +97,13 @@ if Code.ensure_loaded?(Igniter) do
       %Info{
         group: :attesto_mcp,
         example: Docs.example(),
-        schema: [resource_path: :string, scopes: :string, router: :string],
+        schema: [
+          config_module: :string,
+          config_function: :string,
+          resource_path: :string,
+          scopes: :string,
+          router: :string
+        ],
         aliases: []
       }
     end
@@ -100,12 +111,20 @@ if Code.ensure_loaded?(Igniter) do
     @impl Igniter.Mix.Task
     def igniter(igniter) do
       options = igniter.args.options
+
+      case config_mfa(options) do
+        {:ok, config_mfa} -> install(igniter, options, config_mfa)
+        {:error, issue} -> Igniter.add_issue(igniter, issue)
+      end
+    end
+
+    defp install(igniter, options, config_mfa) do
       resource_path = normalize_resource_path(options[:resource_path] || @default_resource_path)
       scopes = options[:scopes] |> Kernel.||(@default_scopes) |> parse_scopes!()
       router = resolve_router(igniter, options)
       pipeline_name = pipeline_name(resource_path)
 
-      case installation_state(igniter, router, pipeline_name, resource_path, scopes) do
+      case installation_state(igniter, router, pipeline_name, resource_path, scopes, config_mfa) do
         {igniter, :installed} ->
           Igniter.add_notice(
             igniter,
@@ -115,7 +134,7 @@ if Code.ensure_loaded?(Igniter) do
         {igniter, :absent} ->
           igniter
           |> ensure_router_use(router)
-          |> add_protect_pipeline(router, pipeline_name, resource_path, scopes)
+          |> add_protect_pipeline(router, pipeline_name, resource_path, scopes, config_mfa)
           |> add_metadata_scope(router, resource_path, scopes)
           |> add_protected_scope(router, pipeline_name, resource_path)
           |> Igniter.add_notice("""
@@ -125,7 +144,7 @@ if Code.ensure_loaded?(Igniter) do
           resource metadata endpoint (with no implicit root document) and a
           #{inspect(pipeline_name)} pipeline that enforces the #{inspect(scopes)}
           scope(s) and this resource's exact audience via
-          AttestoMCP.Plug.ProtectResource.
+          AttestoMCP.Plug.ProtectResource using #{inspect(config_mfa)}.
 
           No origin is pinned: both metadata and protection derive the resource
           origin from each request. Behind a reverse proxy, add the same
@@ -175,13 +194,14 @@ if Code.ensure_loaded?(Igniter) do
       )
     end
 
-    defp add_protect_pipeline(igniter, router, pipeline_name, resource_path, scopes) do
+    defp add_protect_pipeline(igniter, router, pipeline_name, resource_path, scopes, config_mfa) do
       Phoenix.add_pipeline(
         igniter,
         pipeline_name,
         """
         plug :accepts, ["json"]
         plug AttestoMCP.Plug.ProtectResource,
+          config: #{inspect(config_mfa)},
           scopes: #{inspect(scopes)},
           resource: #{inspect(resource_path)},
           resource_audience: :resource
@@ -194,14 +214,14 @@ if Code.ensure_loaded?(Igniter) do
     # scaffold byte-for-byte idempotent, while legacy raw routes, an implicit
     # single-resource root, or partial/manual wiring stop with migration advice
     # instead of being combined into duplicate or under-protected routes.
-    defp installation_state(igniter, router, pipeline_name, resource_path, scopes) do
+    defp installation_state(igniter, router, pipeline_name, resource_path, scopes, config_mfa) do
       {igniter, _source, zipper} = ProjectModule.find_module!(igniter, router)
 
-      state = classify_installation(zipper, pipeline_name, resource_path, scopes)
+      state = classify_installation(zipper, pipeline_name, resource_path, scopes, config_mfa)
       {igniter, state}
     end
 
-    defp classify_installation(zipper, pipeline_name, resource_path, scopes) do
+    defp classify_installation(zipper, pipeline_name, resource_path, scopes, config_mfa) do
       cond do
         legacy_metadata_route?(zipper) ->
           {:conflict, legacy_route_issue(resource_path)}
@@ -213,28 +233,28 @@ if Code.ensure_loaded?(Igniter) do
           {:conflict, non_literal_metadata_issue(resource_path)}
 
         metadata_declaration?(zipper, resource_path) ->
-          declared_installation_state(zipper, pipeline_name, resource_path, scopes)
+          declared_installation_state(zipper, pipeline_name, resource_path, scopes, config_mfa)
 
         target_artifact?(zipper, pipeline_name, resource_path) ->
-          {:conflict, partial_installation_issue(resource_path, scopes)}
+          {:conflict, partial_installation_issue(resource_path, scopes, config_mfa)}
 
         true ->
           :absent
       end
     end
 
-    defp declared_installation_state(zipper, pipeline_name, resource_path, scopes) do
-      if complete_installation?(zipper, pipeline_name, resource_path, scopes) do
+    defp declared_installation_state(zipper, pipeline_name, resource_path, scopes, config_mfa) do
+      if complete_installation?(zipper, pipeline_name, resource_path, scopes, config_mfa) do
         :installed
       else
-        {:conflict, partial_installation_issue(resource_path, scopes)}
+        {:conflict, partial_installation_issue(resource_path, scopes, config_mfa)}
       end
     end
 
-    defp complete_installation?(zipper, pipeline_name, resource_path, scopes) do
+    defp complete_installation?(zipper, pipeline_name, resource_path, scopes, config_mfa) do
       router_uses_macro?(zipper) and
         complete_metadata_declaration?(zipper, resource_path, scopes) and
-        complete_protection_pipeline?(zipper, pipeline_name, resource_path, scopes) and
+        complete_protection_pipeline?(zipper, pipeline_name, resource_path, scopes, config_mfa) and
         protected_scope?(zipper, pipeline_name, resource_path)
     end
 
@@ -281,12 +301,12 @@ if Code.ensure_loaded?(Igniter) do
       keyword_value_equals?(opts, :root, false) or keyword_value_equals?(opts, :root, true)
     end
 
-    defp complete_protection_pipeline?(zipper, pipeline_name, resource_path, scopes) do
+    defp complete_protection_pipeline?(zipper, pipeline_name, resource_path, scopes, config_mfa) do
       match?(
         {:ok, _},
         Function.move_to_function_call(zipper, :pipeline, 2, fn pipeline ->
           Function.argument_equals?(pipeline, 0, pipeline_name) and
-            pipeline_protects_resource?(pipeline, resource_path, scopes)
+            pipeline_protects_resource?(pipeline, resource_path, scopes, config_mfa)
         end)
       )
     end
@@ -303,7 +323,7 @@ if Code.ensure_loaded?(Igniter) do
       )
     end
 
-    defp pipeline_protects_resource?(pipeline, resource_path, scopes) do
+    defp pipeline_protects_resource?(pipeline, resource_path, scopes, config_mfa) do
       match?(
         {:ok, _},
         Common.within(pipeline, fn subtree ->
@@ -312,15 +332,16 @@ if Code.ensure_loaded?(Igniter) do
               Function.argument_matches_predicate?(
                 plug,
                 1,
-                &protection_opts_match?(&1, resource_path, scopes)
+                &protection_opts_match?(&1, resource_path, scopes, config_mfa)
               )
           end)
         end)
       )
     end
 
-    defp protection_opts_match?(opts, resource_path, scopes) do
-      keyword_value_equals?(opts, :scopes, scopes) and
+    defp protection_opts_match?(opts, resource_path, scopes, config_mfa) do
+      keyword_literal_equals?(opts, :config, config_mfa) and
+        keyword_value_equals?(opts, :scopes, scopes) and
         keyword_value_equals?(opts, :resource, resource_path) and
         keyword_value_equals?(opts, :resource_audience, :resource)
     end
@@ -383,6 +404,15 @@ if Code.ensure_loaded?(Igniter) do
       case CodeKeyword.get_key(opts, key) do
         {:ok, value} -> Common.nodes_equal?(value, expected)
         :error -> false
+      end
+    end
+
+    defp keyword_literal_equals?(opts, key, expected) do
+      with {:ok, value} <- CodeKeyword.get_key(opts, key),
+           {:ok, actual} <- Common.expand_literal(value) do
+        actual == expected
+      else
+        _ -> false
       end
     end
 
@@ -464,12 +494,13 @@ if Code.ensure_loaded?(Igniter) do
       """
     end
 
-    defp partial_installation_issue(resource_path, scopes) do
+    defp partial_installation_issue(resource_path, scopes, config_mfa) do
       """
       attesto_mcp.install found existing wiring for #{inspect(resource_path)}, but it does not
       match a complete audience-confined scaffold for scopes #{inspect(scopes)}, so no router
       changes were made. Ensure the metadata declaration uses those scopes and an explicit
       boolean `root` option, its ProtectResource pipeline uses the same scopes plus
+      `config: #{inspect(config_mfa)}`,
       `resource: #{inspect(resource_path)}` and `resource_audience: :resource`, and the resource
       scope pipes through that pipeline. Alternatively remove the partial wiring and rerun the
       installer.
@@ -499,6 +530,38 @@ if Code.ensure_loaded?(Igniter) do
         :error ->
           Common.add_code(zipper, "use AttestoMCP.Router", placement: :before)
       end
+    end
+
+    defp config_mfa(options) do
+      module_name = options[:config_module]
+      function_name = options[:config_function] || "config"
+
+      cond do
+        not is_binary(module_name) or module_name == "" ->
+          {:error,
+           "attesto_mcp.install requires --config-module, for example " <>
+             "`--config-module MyApp.Attesto`"}
+
+        not Regex.match?(~r/\A[A-Z][A-Za-z0-9_]*(?:\.[A-Z][A-Za-z0-9_]*)*\z/, module_name) ->
+          {:error, "--config-module must be a valid Elixir module name such as MyApp.Attesto"}
+
+        not is_binary(function_name) or
+            not Regex.match?(~r/\A[a-z_][A-Za-z0-9_]*[!?]?\z/, function_name) ->
+          {:error, "--config-function must be a valid existing Elixir function name"}
+
+        true ->
+          existing_function_atom(module_name, function_name)
+      end
+    end
+
+    defp existing_function_atom(module_name, function_name) do
+      function = String.to_existing_atom(function_name)
+      {:ok, {ProjectModule.parse(module_name), function}}
+    rescue
+      ArgumentError ->
+        {:error,
+         "--config-function #{inspect(function_name)} is not an existing function atom; " <>
+           "compile the configuration module before running the installer"}
     end
 
     defp resolve_router(igniter, options) do

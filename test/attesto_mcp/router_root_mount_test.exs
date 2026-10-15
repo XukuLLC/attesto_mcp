@@ -21,6 +21,16 @@ defmodule AttestoMCP.RouterRootMountTest do
     end
   end
 
+  defmodule RootResourceRouter do
+    @moduledoc false
+    use Phoenix.Router
+    use AttestoMCP.Router
+
+    scope "/" do
+      attesto_mcp_protected_resource_metadata "/", scopes: [Scopes.tools_call()]
+    end
+  end
+
   defmodule NoRootRouter do
     @moduledoc false
     use Phoenix.Router
@@ -52,6 +62,27 @@ defmodule AttestoMCP.RouterRootMountTest do
     test "auto-mounts the root document for the sole resource" do
       assert status(SingleRouter, "/.well-known/oauth-protected-resource") == 200
       assert status(SingleRouter, "/.well-known/oauth-protected-resource/mcp") == 200
+    end
+
+    test "mounts a root resource at the canonical route without a trailing slash" do
+      assert status(RootResourceRouter, "/.well-known/oauth-protected-resource") == 200
+
+      paths = Enum.map(RootResourceRouter.__routes__(), & &1.path)
+      assert "/.well-known/oauth-protected-resource" in paths
+      refute "/.well-known/oauth-protected-resource/" in paths
+    end
+
+    test "rejects root: false for a root resource" do
+      assert_raise ArgumentError, ~r/root: false cannot be used/, fn ->
+        defmodule DisabledRootResourceRouter do
+          use Phoenix.Router
+          use AttestoMCP.Router
+
+          scope "/" do
+            attesto_mcp_protected_resource_metadata "/", scopes: ["mcp:use"], root: false
+          end
+        end
+      end
     end
   end
 

@@ -753,6 +753,54 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     assert opts |> ProtectResource.init() |> Macro.escape()
   end
 
+  test "static scope configuration rejects ambiguity and duplicates", %{config: config} do
+    assert_raise ArgumentError, ~r/either :scope or :scopes/, fn ->
+      ProtectResource.init(
+        config: config,
+        scope: Scopes.tools_call(),
+        scopes: [Scopes.tools_call()]
+      )
+    end
+
+    assert_raise ArgumentError, ~r/unique RFC 6749/, fn ->
+      ProtectResource.init(
+        config: config,
+        scopes: [Scopes.tools_call(), Scopes.tools_call()]
+      )
+    end
+  end
+
+  test "invalid metadata callback output is total for insufficient-scope responses", %{config: config} do
+    token = Factory.access_token(config, scopes: [Scopes.resources_read()])
+
+    with_path =
+      :post
+      |> conn("https://mcp.example.com/mcp")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> protect(config,
+        scopes: [Scopes.tools_call()],
+        resource: "/mcp",
+        resource_metadata_url: fn _conn -> nil end
+      )
+
+    assert with_path.status == 403
+    assert [challenge] = get_resp_header(with_path, "www-authenticate")
+    assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+
+    without_path =
+      :post
+      |> conn("https://mcp.example.com/mcp")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> protect(config,
+        scopes: [Scopes.tools_call()],
+        resource_metadata_url: fn _conn -> nil end
+      )
+
+    assert without_path.status == 403
+    assert [challenge] = get_resp_header(without_path, "www-authenticate")
+    refute challenge =~ "resource_metadata="
+  end
+
   test "compiles inside a Plug.Builder pipeline under init_mode: :compile" do
     defmodule CompiledMCPPipeline do
       @moduledoc false

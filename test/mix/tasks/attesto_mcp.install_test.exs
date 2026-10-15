@@ -1,30 +1,51 @@
+defmodule AttestoMCP.InstallerTestConfig do
+  @moduledoc false
+  alias AttestoMCP.Test.Factory
+
+  def config do
+    Process.get({__MODULE__, :config}) ||
+      tap(Factory.config(), &Process.put({__MODULE__, :config}, &1))
+  end
+
+  def alternate_config, do: config()
+end
+
 defmodule Mix.Tasks.AttestoMcp.InstallTest do
   # Module name is `AttestoMcp` (not `AttestoMCP`) so the test module mirrors the
   # task module Mix resolves; see the note on Mix.Tasks.AttestoMcp.Install.
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import Igniter.Test
+  import Plug.Conn
+  import Plug.Test
+
+  alias AttestoMCP.InstallerTestConfig
+  alias AttestoMCP.Plug.ProtectResource
+  alias AttestoMCP.Test.Factory
 
   # The router is passed explicitly so the task never falls back to Igniter's
   # module-scanning router discovery, which is not deterministic when the whole
   # suite runs against the shared Igniter test scratch project.
-  @argv ["--resource-path", "/mcp", "--scopes", "mcp:use", "--router", "TestWeb.Router"]
-  @alpha_argv [
-    "--resource-path",
-    "/mcp/alpha",
-    "--scopes",
-    "alpha:tools",
-    "--router",
-    "TestWeb.Router"
-  ]
-  @beta_argv [
-    "--resource-path",
-    "/mcp/beta",
-    "--scopes",
-    "beta:tools",
-    "--router",
-    "TestWeb.Router"
-  ]
+  @config_argv ["--config-module", "AttestoMCP.InstallerTestConfig"]
+  @argv @config_argv ++ ["--resource-path", "/mcp", "--scopes", "mcp:use", "--router", "TestWeb.Router"]
+  @alpha_argv @config_argv ++
+                [
+                  "--resource-path",
+                  "/mcp/alpha",
+                  "--scopes",
+                  "alpha:tools",
+                  "--router",
+                  "TestWeb.Router"
+                ]
+  @beta_argv @config_argv ++
+               [
+                 "--resource-path",
+                 "/mcp/beta",
+                 "--scopes",
+                 "beta:tools",
+                 "--router",
+                 "TestWeb.Router"
+               ]
 
   describe "mix attesto_mcp.install" do
     test "scaffolds the public metadata macro and audience-confined protection" do
@@ -40,6 +61,7 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
       assert source =~ "root: false"
 
       assert source =~ "AttestoMCP.Plug.ProtectResource"
+      assert source =~ "config: {AttestoMCP.InstallerTestConfig, :config}"
       assert source =~ ~s(resource: "/mcp")
       assert source =~ "resource_audience: :resource"
 
@@ -47,6 +69,75 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
       # hand-writes either a controller route or an implicit root document.
       refute source =~ "AttestoMCP.MetadataController"
       refute source =~ ~s(get("/oauth-protected-resource")
+    end
+
+    test "the generated config MFA is compile-safe and authenticates a request" do
+      config = InstallerTestConfig.config()
+      resource = "https://mcp.example.com/mcp"
+      token = Factory.access_token(config, audience: resource, scopes: ["mcp:use"])
+
+      protection =
+        ProtectResource.init(
+          config: {InstallerTestConfig, :config},
+          scopes: ["mcp:use"],
+          resource: "/mcp",
+          resource_audience: :resource
+        )
+
+      assert Macro.escape(protection)
+
+      conn =
+        :post
+        |> conn(resource)
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> ProtectResource.call(protection)
+
+      refute conn.halted, "generated protection halted: #{conn.status} #{conn.resp_body}"
+    end
+
+    test "missing or malformed config options stop before router mutation" do
+      cases = [
+        ["--resource-path", "/mcp", "--router", "TestWeb.Router"],
+        ["--config-module", "bad-module", "--resource-path", "/mcp", "--router", "TestWeb.Router"],
+        [
+          "--config-module",
+          "AttestoMCP.InstallerTestConfig",
+          "--config-function",
+          "bad-name",
+          "--resource-path",
+          "/mcp",
+          "--router",
+          "TestWeb.Router"
+        ]
+      ]
+
+      for argv <- cases do
+        project = phx_test_project()
+        before = router_source(project)
+        result = Igniter.compose_task(project, "attesto_mcp.install", argv)
+
+        assert_has_issue(result, &(&1 =~ "config"))
+        assert router_source(result) == before
+      end
+    end
+
+    test "a rerun with a different config callback reports a conflict" do
+      installed =
+        phx_test_project()
+        |> Igniter.compose_task("attesto_mcp.install", @argv)
+        |> apply_igniter!()
+
+      before = router_source(installed)
+
+      changed =
+        Igniter.compose_task(
+          installed,
+          "attesto_mcp.install",
+          @argv ++ ["--config-function", "alternate_config"]
+        )
+
+      assert_has_issue(changed, &(&1 =~ "config: {AttestoMCP.InstallerTestConfig, :alternate_config}"))
+      assert router_source(changed) == before
     end
 
     test "a true re-run of the same resource is a byte-for-byte no-op" do
@@ -123,6 +214,8 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
 
     test "resource paths with the same readable slug still get distinct pipelines" do
       foo_dash = [
+        "--config-module",
+        "AttestoMCP.InstallerTestConfig",
         "--resource-path",
         "/mcp/foo-bar",
         "--scopes",
@@ -132,6 +225,8 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
       ]
 
       foo_slash = [
+        "--config-module",
+        "AttestoMCP.InstallerTestConfig",
         "--resource-path",
         "/mcp/foo/bar",
         "--scopes",
@@ -171,7 +266,7 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
 
     test "rejects degenerate resource paths before changing the router" do
       for path <- ["", "/", "/mcp/../admin", "/mcp?tenant=one"] do
-        argv = ["--resource-path", path, "--scopes", "mcp:use", "--router", "TestWeb.Router"]
+        argv = @config_argv ++ ["--resource-path", path, "--scopes", "mcp:use", "--router", "TestWeb.Router"]
 
         assert_raise Mix.Error, ~r/--resource-path/, fn ->
           phx_test_project()
@@ -182,7 +277,7 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
 
     test "rejects an empty scope list before changing the router" do
       for scopes <- ["", ",", " , "] do
-        argv = ["--resource-path", "/mcp", "--scopes", scopes, "--router", "TestWeb.Router"]
+        argv = @config_argv ++ ["--resource-path", "/mcp", "--scopes", scopes, "--router", "TestWeb.Router"]
 
         assert_raise Mix.Error, ~r/at least one OAuth scope/, fn ->
           phx_test_project()

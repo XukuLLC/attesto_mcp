@@ -169,7 +169,7 @@ either here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 1.3.2"}
+    {:attesto_mcp, "~> 1.4.0"}
   ]
 end
 ```
@@ -178,13 +178,18 @@ For Phoenix apps, the optional Igniter installer can scaffold the protected
 resource metadata route and protecting pipeline:
 
 ```bash
-mix attesto_mcp.install --resource-path /mcp --scopes mcp:tools:call
+mix attesto_mcp.install \
+  --config-module MyApp.Attesto \
+  --resource-path /mcp \
+  --scopes mcp:tools:call
 ```
 
 The installer emits the public
 `attesto_mcp_protected_resource_metadata/2` macro with `root: false` and
 generates protection with the same path/scopes plus
-`resource_audience: :resource`. Re-running the same resource is a no-op;
+`resource_audience: :resource` and the escape-safe
+`config: {MyApp.Attesto, :config}` callback. Use `--config-function` when the
+zero-arity function has another name. Re-running the same resource is a no-op;
 installing another resource adds another path-inserted metadata document but
 never an ambiguous shared root. If a legacy client needs the unsuffixed root,
 change exactly one declaration to `root: true` explicitly.
@@ -392,11 +397,32 @@ pipeline :mcp_auth do
     scopes: [AttestoMCP.Scopes.tools_call()]
 end
 
+# This is Anubis's first host callback for a new live frame; it is not the
+# transport-level protocol initializer.
+def init(_client_info, frame) do
+  {:ok, AttestoMCP.Anubis.put_auth(frame)}
+end
+
 def handle_request(request, frame) do
   frame = AttestoMCP.Anubis.put_auth(frame)
-  # The frame now carries the verified subject, scopes, and claims.
+  # The frame now carries the verified subject, scopes, claims, and a
+  # callback-level session-owner marker.
 end
 ```
+
+Call `put_auth/1` from `init/2` and every later host callback that uses the
+authenticated frame. Here, `init/2` is merely the first host callback Anubis
+exposes for a new live frame; it is not the transport-level protocol
+initializer. The owner marker therefore binds the first identity visible to
+that callback to the live frame and rejects a different issuer, subject, or
+OAuth client before a later callback uses it. A mismatch raises
+`AttestoMCP.Anubis.SessionOwnerMismatchError`; Anubis reports that callback
+failure as a failed request or session rather than an OAuth 401/403. Anubis 2.0
+handles initialization, GET/SSE, DELETE, and persisted-session recovery before
+server callbacks; its normal HTTP recovery path also does not restore saved
+frame assigns. This compatibility bridge therefore cannot bind the original
+initializer or protect those transport and recovery operations. Applications
+requiring complete session isolation should use `attesto_mcp_server`.
 
 The package also retains two optional infrastructure adapters for established
 Anubis deployments:
@@ -410,16 +436,24 @@ See those modules for their complete operational contracts. They are
 compatibility integrations, not prerequisites for `attesto_mcp` or
 `attesto_mcp_server`.
 
+For persisted sessions, implement Anubis `serialize_assigns/1` to limit what is
+written even though Anubis 2.0's normal recovery path does not restore those
+frame assigns. Retain only non-sensitive application values needed by another
+supported or custom path. Remove raw token claims, tokens, principals,
+callback-only owner markers, and request-only assigns. Do not share one Ecto
+session table across independently trusted Anubis servers; the current store
+callbacks do not provide a server namespace.
+
 ## Status
 
 A stable `1.x` release: the public API follows [semantic versioning](https://semver.org/) —
 minor and patch releases are backward-compatible, and breaking changes wait for
-a new major version. Pin to `~> 1.3.2`.
+a new major version. Pin to `~> 1.4.0`.
 
 ## Security notes
 
-- For the coordinated security update, deploy AttestoMCP 1.3.2 with Attesto
-  2.2.2 or later in the 2.x line. Delegated core JOSE and credential verification
+- For the coordinated security update, deploy AttestoMCP 1.4.0 with Attesto
+  2.4.0 or later in the 2.x line. Delegated core JOSE and credential verification
   receives the new core hardening only with that update. The existing Attesto
   1.x compatibility range remains available.
 - Use HTTPS for HTTP MCP servers.

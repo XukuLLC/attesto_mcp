@@ -34,14 +34,27 @@ defmodule AttestoMCP.Plug.RequireScopes do
 
   @impl Plug
   def init(opts) when is_list(opts) do
+    if Keyword.keyword?(opts) and Keyword.has_key?(opts, :scope) and Keyword.has_key?(opts, :scopes) do
+      raise ArgumentError, "use either :scope or :scopes, not both"
+    end
+
     required = normalize_required(opts)
 
-    if required == [] do
-      raise ArgumentError, "AttestoMCP.Plug.RequireScopes requires at least one scope"
+    if required == [] or not Scope.valid_list?(required) or Enum.uniq(required) != required do
+      raise ArgumentError,
+            "AttestoMCP.Plug.RequireScopes requires unique RFC 6749 scope-token strings"
+    end
+
+    catalog = Scope.new_catalog(required)
+
+    if Enum.any?(required, &String.contains?(&1, "*")) or
+         !Enum.all?(required, &Scope.known?(catalog, &1)) do
+      raise ArgumentError,
+            "AttestoMCP.Plug.RequireScopes requires concrete scopes; wildcard requirements are forbidden"
     end
 
     %{
-      catalog: Scope.new_catalog(required),
+      catalog: catalog,
       claims_key: Keyword.get(opts, :claims_key, @claims_key),
       required: required,
       scopes_key: Keyword.get(opts, :scopes_key, @scopes_key),
@@ -77,7 +90,7 @@ defmodule AttestoMCP.Plug.RequireScopes do
 
   defp normalize_required(opts) do
     cond do
-      Keyword.keyword?(opts) and is_binary(Keyword.get(opts, :scope)) ->
+      Keyword.keyword?(opts) and Keyword.has_key?(opts, :scope) ->
         [Keyword.fetch!(opts, :scope)]
 
       Keyword.keyword?(opts) ->

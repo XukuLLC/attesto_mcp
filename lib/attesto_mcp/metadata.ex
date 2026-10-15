@@ -65,9 +65,11 @@ defmodule AttestoMCP.Metadata do
 
   Required options:
 
-    * `:resource` - the protected resource identifier, usually the canonical
-      MCP server URI such as `"https://mcp.example.com/mcp"`.
-    * `:authorization_servers` - a non-empty list of issuer identifiers.
+    * `:resource` - an absolute HTTP(S) protected resource identifier with no
+      fragment, usually the canonical MCP server URI such as
+      `"https://mcp.example.com/mcp"`.
+    * `:authorization_servers` - a non-empty, unique list of HTTPS issuer
+      identifiers with no query or fragment.
 
   Common options include `:scopes_supported`, `:bearer_methods_supported`,
   `:dpop_signing_alg_values_supported`, and
@@ -77,6 +79,9 @@ defmodule AttestoMCP.Metadata do
   def protected_resource(opts) when is_list(opts) do
     resource = Keyword.fetch!(opts, :resource)
     authorization_servers = Keyword.fetch!(opts, :authorization_servers)
+
+    validate_resource!(resource)
+    validate_authorization_servers!(authorization_servers)
 
     %{
       "authorization_servers" => authorization_servers,
@@ -132,7 +137,8 @@ defmodule AttestoMCP.Metadata do
   """
   @spec protected_resource_url(String.t(), String.t()) :: String.t()
   def protected_resource_url(base_url, resource_path) when is_binary(base_url) and is_binary(resource_path) do
-    String.trim_trailing(base_url, "/") <> "/.well-known/oauth-protected-resource" <> normalize_path(resource_path)
+    String.trim_trailing(base_url, "/") <>
+      "/.well-known/oauth-protected-resource" <> well_known_resource_suffix(resource_path)
   end
 
   @spec protected_resource_url(Plug.Conn.t(), String.t()) :: String.t()
@@ -318,6 +324,82 @@ defmodule AttestoMCP.Metadata do
   defp port_suffix("https", 443), do: ""
   defp port_suffix("http", 80), do: ""
   defp port_suffix(_scheme, port), do: ":" <> Integer.to_string(port)
+
+  defp validate_resource!(resource) when is_binary(resource) do
+    case parse_uri(resource) do
+      {:ok, %URI{scheme: scheme, host: host, userinfo: nil, fragment: nil}}
+      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
+        if valid_percent_encoding?(resource) do
+          :ok
+        else
+          raise ArgumentError, ":resource must not contain a malformed percent escape"
+        end
+
+      _ ->
+        raise ArgumentError,
+              ":resource must be an absolute HTTP(S) URI with a non-empty host and no fragment or userinfo"
+    end
+  end
+
+  defp validate_resource!(_resource) do
+    raise ArgumentError,
+          ":resource must be an absolute HTTP(S) URI with a non-empty host and no fragment or userinfo"
+  end
+
+  defp validate_authorization_servers!(servers) when is_list(servers) and servers != [] do
+    if Enum.uniq(servers) != servers or not Enum.all?(servers, &valid_issuer?/1) do
+      raise ArgumentError,
+            ":authorization_servers must be a non-empty unique list of HTTPS issuer identifiers"
+    end
+
+    :ok
+  end
+
+  defp validate_authorization_servers!(_servers) do
+    raise ArgumentError,
+          ":authorization_servers must be a non-empty unique list of HTTPS issuer identifiers"
+  end
+
+  defp valid_issuer?(issuer) when is_binary(issuer) and issuer != "" do
+    case parse_uri(issuer) do
+      {:ok, %URI{scheme: "https", host: host, userinfo: nil, query: nil, fragment: nil}}
+      when is_binary(host) and host != "" ->
+        valid_percent_encoding?(issuer)
+
+      _ ->
+        false
+    end
+  end
+
+  defp valid_issuer?(_issuer), do: false
+
+  defp parse_uri(value) do
+    if String.valid?(value), do: URI.new(value), else: {:error, :invalid_utf8}
+  rescue
+    _exception -> {:error, :invalid_uri}
+  catch
+    _kind, _reason -> {:error, :invalid_uri}
+  end
+
+  defp valid_percent_encoding?(value) do
+    value
+    |> :binary.bin_to_list()
+    |> valid_percent_bytes?()
+  end
+
+  defp valid_percent_bytes?([]), do: true
+
+  defp valid_percent_bytes?([?%, hi, lo | rest]) do
+    hex_digit?(hi) and hex_digit?(lo) and valid_percent_bytes?(rest)
+  end
+
+  defp valid_percent_bytes?([?% | _rest]), do: false
+  defp valid_percent_bytes?([_byte | rest]), do: valid_percent_bytes?(rest)
+
+  defp hex_digit?(byte), do: byte in ?0..?9 or byte in ?A..?F or byte in ?a..?f
+
+  defp well_known_resource_suffix("/"), do: ""
+  defp well_known_resource_suffix(resource_path), do: normalize_path(resource_path)
 
   defp normalize_path("/" <> _rest = path), do: path
   defp normalize_path(path), do: "/" <> path

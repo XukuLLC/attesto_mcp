@@ -6,8 +6,11 @@ if Code.ensure_loaded?(Ecto.Schema) do
     One row per MCP session, keyed by the client's `Mcp-Session-Id`. `state` is
     the JSON-serializable session map Anubis produces (client_info, capabilities,
     `frame`, ...), stored as `jsonb` so it round-trips with string keys.
-    `expires_at` bounds how long a disconnected session may be restored; expired
-    rows are reaped lazily on load and by the store's `cleanup_expired/1`.
+    `expires_at` bounds how long a disconnected session record remains eligible
+    for recovery; expired rows are reaped lazily on load and by the store's
+    `cleanup_expired/1`. Anubis 2.0's normal Streamable HTTP recovery consumes
+    initialization metadata from that record but does not restore its saved live
+    frame or assigns.
 
     Compile-guarded on `Ecto.Schema`: a consumer that does not persist MCP
     sessions never compiles it.

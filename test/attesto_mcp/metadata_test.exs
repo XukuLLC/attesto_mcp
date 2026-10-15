@@ -161,7 +161,12 @@ defmodule AttestoMCP.MetadataTest do
     assert via_origin["resource"] == "https://canonical.example/mcp"
 
     # A port and a path prefix (path-prefix proxy) are legitimate and accepted.
-    with_port = Metadata.protected_resource(conn, "/mcp", base_url: "http://mcp.example.com:4000/base")
+    with_port =
+      Metadata.protected_resource(conn, "/mcp",
+        base_url: "http://mcp.example.com:4000/base",
+        authorization_servers: ["https://auth.example.com"]
+      )
+
     assert with_port["resource"] == "http://mcp.example.com:4000/base/mcp"
   end
 
@@ -207,6 +212,72 @@ defmodule AttestoMCP.MetadataTest do
 
     assert metadata["resource"] == "https://canonical.example/mcp"
     assert metadata["authorization_servers"] == ["https://auth.example.com"]
+  end
+
+  test "rejects malformed protected-resource identifiers" do
+    invalid = [
+      nil,
+      "",
+      "/mcp",
+      "https:///mcp",
+      "ftp://mcp.example/mcp",
+      "https://mcp.example/mcp#fragment",
+      "https://mcp.example/%zz",
+      <<0xFF>>
+    ]
+
+    for resource <- invalid do
+      assert_raise ArgumentError, ~r/:resource/, fn ->
+        Metadata.protected_resource(
+          resource: resource,
+          authorization_servers: ["https://auth.example.com"]
+        )
+      end
+    end
+  end
+
+  test "requires a non-empty unique list of HTTPS authorization-server issuers" do
+    invalid = [
+      nil,
+      [],
+      "https://auth.example.com",
+      [""],
+      ["http://auth.example.com"],
+      ["https:///issuer"],
+      ["https://auth.example.com?query=1"],
+      ["https://auth.example.com#fragment"],
+      [<<0xFF>>],
+      ["https://auth.example.com", "https://auth.example.com"]
+    ]
+
+    for servers <- invalid do
+      assert_raise ArgumentError, ~r/:authorization_servers/, fn ->
+        Metadata.protected_resource(
+          resource: "https://mcp.example.com/mcp",
+          authorization_servers: servers
+        )
+      end
+    end
+  end
+
+  test "preserves a valid unique multi-issuer list and meaningful trailing slashes" do
+    issuers = ["https://one.example/tenant/", "https://two.example"]
+
+    metadata =
+      Metadata.protected_resource(
+        resource: "https://mcp.example.com/mcp",
+        authorization_servers: issuers
+      )
+
+    assert metadata["authorization_servers"] == issuers
+  end
+
+  test "the root resource uses the bare well-known URL without a trailing slash" do
+    assert Metadata.protected_resource_url("https://mcp.example.com", "/") ==
+             "https://mcp.example.com/.well-known/oauth-protected-resource"
+
+    assert Metadata.protected_resource_url("https://mcp.example.com", "/mcp") ==
+             "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
   end
 
   test "authorization server metadata delegates to Attesto discovery" do

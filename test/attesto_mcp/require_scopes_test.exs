@@ -63,6 +63,43 @@ defmodule AttestoMCP.Plug.RequireScopesTest do
     assert [] == Plug.Conn.get_resp_header(conn, "pragma")
   end
 
+  test "rejects simultaneous scalar and list scope options" do
+    assert_raise ArgumentError, ~r/either :scope or :scopes/, fn ->
+      RequireScopes.init(scope: Scopes.tools_call(), scopes: [Scopes.tools_call()])
+    end
+  end
+
+  test "rejects duplicate and malformed static scope sets" do
+    assert_raise ArgumentError, ~r/unique RFC 6749/, fn ->
+      RequireScopes.init(scopes: [Scopes.tools_call(), Scopes.tools_call()])
+    end
+
+    for scopes <- [[], [""], ["contains space"], [123]] do
+      assert_raise ArgumentError, ~r/unique RFC 6749/, fn ->
+        RequireScopes.init(scopes: scopes)
+      end
+    end
+  end
+
+  test "rejects wildcard requirements during plug initialization" do
+    for scope <- ["*", "mcp:*", "mcp.resource.*"] do
+      assert_raise ArgumentError, ~r/concrete scopes.*wildcard requirements/, fn ->
+        RequireScopes.init(scopes: [scope])
+      end
+    end
+  end
+
+  test "accepts a valid scalar or unique list" do
+    assert %{required: [scope]} = RequireScopes.init(scope: Scopes.tools_call())
+    assert scope == Scopes.tools_call()
+
+    assert %{required: [read, call]} =
+             RequireScopes.init(scopes: [Scopes.resources_read(), Scopes.tools_call()])
+
+    assert read == Scopes.resources_read()
+    assert call == Scopes.tools_call()
+  end
+
   defp authenticate(conn, config) do
     Authenticate.call(conn, Authenticate.init(config: config, htu: fn _conn -> Factory.htu() end))
   end

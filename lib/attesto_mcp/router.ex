@@ -155,21 +155,36 @@ defmodule AttestoMCP.Router do
   """
   defmacro attesto_mcp_protected_resource_metadata(resource_path, opts \\ []) do
     quote bind_quoted: [resource_path: resource_path, opts: opts] do
+      if Phoenix.Router.scoped_path(__MODULE__, "/") != "/" do
+        raise ArgumentError,
+              "attesto_mcp_protected_resource_metadata must be declared at the router root; " <>
+                "place it inside `scope \"/\" do ... end` rather than a path-prefixed scope"
+      end
+
+      resource_path = AttestoMCP.Router.normalize_resource_path!(resource_path)
       {root_choice, metadata_opts} = Keyword.pop(opts, :root, :auto)
+
+      if resource_path == "/" and root_choice == false do
+        raise ArgumentError,
+              "root: false cannot be used when resource_path is / because its RFC 9728 metadata route is the root document"
+      end
 
       private = %{
         attesto_mcp_metadata_opts: metadata_opts,
         attesto_mcp_resource_path: resource_path
       }
 
-      get "/.well-known/oauth-protected-resource" <> resource_path,
+      metadata_path = AttestoMCP.Router.protected_resource_metadata_path(resource_path)
+
+      get metadata_path,
           AttestoMCP.MetadataController,
           :show,
           private: private
 
       # `AttestoMCP.Router.mount_root?/2` runs the compile-time bookkeeping (and
       # raises on an ambiguous implicit root); we only emit the route here.
-      if AttestoMCP.Router.mount_root?(__MODULE__, root_choice) do
+      if AttestoMCP.Router.mount_root?(__MODULE__, root_choice) and
+           metadata_path != "/.well-known/oauth-protected-resource" do
         get "/.well-known/oauth-protected-resource",
             AttestoMCP.MetadataController,
             :show,
@@ -177,6 +192,21 @@ defmodule AttestoMCP.Router do
       end
     end
   end
+
+  @doc false
+  @spec normalize_resource_path!(String.t()) :: String.t()
+  def normalize_resource_path!("/" <> _rest = resource_path), do: resource_path
+  def normalize_resource_path!(resource_path) when is_binary(resource_path), do: "/" <> resource_path
+
+  def normalize_resource_path!(_resource_path) do
+    raise ArgumentError, "resource_path must be a string"
+  end
+
+  @doc false
+  @spec protected_resource_metadata_path(String.t()) :: String.t()
+  def protected_resource_metadata_path("/"), do: "/.well-known/oauth-protected-resource"
+
+  def protected_resource_metadata_path(resource_path), do: "/.well-known/oauth-protected-resource" <> resource_path
 
   @doc false
   # Decide (at compile time) whether the unsuffixed root document should be

@@ -38,6 +38,9 @@ defmodule AttestoMCP.RouterTest do
       attesto_mcp_protected_resource_metadata "/mcp/tuple",
         scopes: [Scopes.server("tuple", :tools_call)],
         base_url: {Origins, :canonical}
+
+      attesto_mcp_protected_resource_metadata "mcp/no-leading",
+        scopes: [Scopes.server("normalized", :tools_call)]
     end
   end
 
@@ -93,6 +96,32 @@ defmodule AttestoMCP.RouterTest do
     metadata = get_metadata("/.well-known/oauth-protected-resource/mcp/tuple")
 
     assert metadata["resource"] == "https://tuple.example/mcp/tuple"
+  end
+
+  test "normalizes a resource path without a leading slash for route and metadata" do
+    metadata = get_metadata("/.well-known/oauth-protected-resource/mcp/no-leading")
+
+    assert metadata["resource"] == "https://mcp.example.com/mcp/no-leading"
+    assert metadata["scopes_supported"] == [Scopes.server("normalized", :tools_call)]
+  end
+
+  test "refuses declaration inside a path-prefixed Phoenix scope" do
+    module = "AttestoMCP.NestedRouter#{System.unique_integer([:positive])}"
+
+    source = """
+    defmodule #{module} do
+      use Phoenix.Router
+      use AttestoMCP.Router
+
+      scope "/api" do
+        attesto_mcp_protected_resource_metadata "/mcp", scopes: ["mcp:use"], root: false
+      end
+    end
+    """
+
+    assert_raise ArgumentError, ~r/must be declared at the router root/, fn ->
+      Code.compile_string(source)
+    end
   end
 
   defp get_metadata(path) do

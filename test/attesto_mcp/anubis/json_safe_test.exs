@@ -3,6 +3,8 @@ defmodule AttestoMCP.Anubis.JSONSafeTest do
   use ExUnit.Case, async: true
 
   alias AttestoMCP.Anubis.JSONSafe
+  alias AttestoMCP.Test.InvalidNestedJasonStruct
+  alias AttestoMCP.Test.ValidJasonStruct
 
   defmodule BareStruct do
     @moduledoc false
@@ -26,11 +28,37 @@ defmodule AttestoMCP.Anubis.JSONSafeTest do
     assert out == %{"keep" => "yes"}
   end
 
-  test "keeps structs that DO have a JSON.Encoder impl (e.g. DateTime)" do
+  test "normalizes structs accepted by the configured JSON library to primitives" do
     dt = ~U[2026-06-23 00:00:00Z]
     out = assert_encodable(%{"at" => dt, "bad" => self()})
-    assert out["at"] == dt
+    assert out["at"] == "2026-06-23T00:00:00Z"
     refute Map.has_key?(out, "bad")
+  end
+
+  test "normalizes a custom Jason struct and drops one with an invalid nested value" do
+    out =
+      assert_encodable(%{
+        "valid" => %ValidJasonStruct{name: "item", count: 2},
+        "invalid" => %InvalidNestedJasonStruct{value: self()},
+        "keep" => true
+      })
+
+    assert out == %{"valid" => %{"name" => "item", "count" => 2}, "keep" => true}
+  end
+
+  test "recursively sanitizes JSON primitives decoded from a struct" do
+    out =
+      assert_encodable(%{
+        "value" => %ValidJasonStruct{name: "contains\0nul", count: 2},
+        "keep" => true
+      })
+
+    assert out == %{"value" => %{"count" => 2}, "keep" => true}
+  end
+
+  test "drops Duration under the default Jason setup without losing siblings" do
+    out = assert_encodable(%{"duration" => struct(Duration), "keep" => "yes"})
+    assert out == %{"keep" => "yes"}
   end
 
   test "drops non-encodable scalars (pid, ref, tuple, function)" do
@@ -84,6 +112,11 @@ defmodule AttestoMCP.Anubis.JSONSafeTest do
     assert out == %{"ok" => "v"}
   end
 
+  test "drops NUL-bearing string values and keys" do
+    out = assert_encodable(%{"ok" => "v", "bad" => "a\0b", "bad\0key" => "x"})
+    assert out == %{"ok" => "v"}
+  end
+
   test "drops a non-byte-aligned bitstring" do
     out = assert_encodable(%{"bits" => <<1::3>>, "ok" => 1})
     assert out == %{"ok" => 1}
@@ -100,5 +133,15 @@ defmodule AttestoMCP.Anubis.JSONSafeTest do
 
   test "a charlist stays a JSON array of integers" do
     assert JSONSafe.sanitize(%{"cs" => ~c"abc"}) == %{"cs" => [97, 98, 99]}
+  end
+
+  test "an improper list is dropped without raising" do
+    improper = [1 | 2]
+    assert JSONSafe.sanitize(%{"bad" => improper, "keep" => 1}) == %{"keep" => 1}
+  end
+
+  test "sanitize/2 validates with the explicitly selected JSON library" do
+    value = JSONSafe.sanitize(%{"value" => %ValidJasonStruct{name: "x", count: 1}}, Jason)
+    assert Jason.encode!(value) == ~s({"value":{"count":1,"name":"x"}})
   end
 end

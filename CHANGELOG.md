@@ -4,6 +4,43 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-10-15
+
+### Security
+
+- Bind Anubis callbacks within a live session to the first issuer, subject, and
+  OAuth client that reaches a host callback; support string-keyed contexts and
+  custom context keys. The guard fails closed as an Anubis request/session error.
+  It cannot bind the original initializer or cover initialization, GET/SSE,
+  DELETE, and recovery actions that Anubis performs before callbacks; Anubis
+  2.0's normal HTTP recovery path also does not restore saved frame assigns.
+- Validate and bound Ecto session identifiers before queries, normalize driver
+  failures across every store callback, and sanitize values with Postgrex's
+  configured JSON library, including NUL and improper-list handling.
+- Validate protected-resource and authorization-server metadata identifiers and
+  reject ambiguous, duplicate, or wildcard route-scope requirements. Resource
+  identifiers must be absolute HTTP(S) URIs and authorization-server identifiers
+  must use HTTPS.
+
+### Fixed
+
+- Require `--config-module` in `mix attesto_mcp.install` and emit the resulting
+  config MFA in generated `ProtectResource` pipelines.
+- Normalize router resource paths, reject metadata declarations under prefixed
+  Phoenix scopes, produce the canonical root well-known URL, clear stale nil
+  principals, and handle invalid metadata-URL callback results without raising.
+
+### Changed
+
+- Coordinate this release with Attesto 2.4.0 or later in the 2.x line so the
+  delegated JOSE, credential, presentation, and scope checks include the current
+  security hardening. The existing Attesto 1.x package range remains supported.
+- Always assign the configured principal key after successful authentication,
+  including `nil`, so session transports clear a stale principal rather than
+  retaining one from an earlier request.
+- Add `put_auth/2`, installer `--config-module` / `--config-function` options,
+  and a configurable JSON library for the optional Ecto session adapter.
+
 ## [1.3.2] - 2026-10-04
 
 ### Security
