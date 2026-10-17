@@ -41,6 +41,7 @@ if Code.ensure_loaded?(Anubis.Server.Frame) do
     """
 
     alias Anubis.Server.Frame
+    alias AttestoMCP.Auth
 
     # The conn/frame assign key `AttestoPhoenix.Plug.Authenticate` writes the
     # verified context under (`AttestoMCP.Plug.Authenticate` assigns the same
@@ -119,7 +120,7 @@ if Code.ensure_loaded?(Anubis.Server.Frame) do
     # the raw verified claims so the full Anubis contract is populated.
     defp auth_claims(ctx) do
       claims = as_map(fetch(ctx, :claims))
-      scopes = scope_list(fetch(ctx, :scope))
+      scopes = Auth.scopes(fetch(ctx, :scope))
 
       %{
         sub: fetch(ctx, :subject),
@@ -192,10 +193,6 @@ if Code.ensure_loaded?(Anubis.Server.Frame) do
     end
 
     defp non_empty_binary?(value), do: is_binary(value) and value != ""
-
-    defp scope_list(scopes) when is_list(scopes), do: scopes
-    defp scope_list(scope) when is_binary(scope), do: String.split(scope, ~r/\s+/, trim: true)
-    defp scope_list(_), do: []
 
     defp as_map(claims) when is_map(claims), do: claims
     defp as_map(_), do: %{}

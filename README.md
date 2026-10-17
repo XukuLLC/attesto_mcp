@@ -114,14 +114,14 @@ resource, so a token minted for a sibling endpoint cannot be replayed here.
 ```elixir
 plug AttestoMCP.Plug.ProtectResource,
   config: &MyApp.Attesto.config/0,
-  resource: "/mcp",
+  resource_path: "/mcp",
   base_url: "https://mcp.example.com",   # pin the origin behind a proxy
   resource_audience: :resource,          # validate aud == this resource's identifier
   scopes: [AttestoMCP.Scopes.tools_call()]
 ```
 
 `resource_audience: :resource` validates the token's `aud` against this
-endpoint's identifier (`base_url` + `resource` path) instead of the host's
+endpoint's identifier (`base_url` + `resource_path`) instead of the host's
 global `config.audience`. A scalar audience must equal that identifier; for an
 array-valued `aud`, every member must equal it, so a token cannot add a sibling
 audience and remain valid. That identifier is computed by the same
@@ -138,12 +138,9 @@ exclusive. Choose the route-derived convenience option or supply the complete
 core policy directly; configuring both raises during plug initialization so
 neither policy can silently replace the other.
 
-Pin the origin with `:base_url` when you enable this behind a TLS-terminating
-proxy: the identifier is otherwise derived from the live request origin
-(`Host` / forwarded headers), which an attacker could spoof to a sibling
-resource's identifier. `resource_audience` is opt-in so existing single-audience
-deployments are unaffected; enabling it (with a pinned origin) is the
-recommended wiring for any server that fronts more than one MCP resource.
+`resource_audience: :resource` requires a pinned `:base_url` or `:origin`.
+Initialization raises when the pin is absent or malformed, so the request
+`Host` and forwarded headers can never select the accepted token audience.
 
 ## What this package is not
 
@@ -169,7 +166,7 @@ either here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 2.0"}
+    {:attesto_mcp, "~> 2.1"}
   ]
 end
 ```
@@ -180,6 +177,7 @@ resource metadata route and protecting pipeline:
 ```bash
 mix attesto_mcp.install \
   --config-module MyApp.Attesto \
+  --base-url https://mcp.example.com \
   --resource-path /mcp \
   --scopes mcp:tools:call
 ```
@@ -187,9 +185,11 @@ mix attesto_mcp.install \
 The installer emits the public
 `attesto_mcp_protected_resource_metadata/2` macro with `root: false` and
 generates protection with the same path/scopes plus
-`resource_audience: :resource` and the escape-safe
-`config: {MyApp.Attesto, :config}` callback. Use `--config-function` when the
-zero-arity function has another name. Re-running the same resource is a no-op;
+`resource_audience: :resource`, the canonical `base_url`, and the escape-safe
+`config: {MyApp.Attesto, :config}` callback on both protection and metadata.
+`--base-url` is required because a generated audience policy must never trust
+the request `Host`. Use `--config-function` when the zero-arity function has
+another name. Re-running the same resource is a no-op;
 installing another resource adds another path-inserted metadata document but
 never an ambiguous shared root. If a legacy client needs the unsuffixed root,
 change exactly one declaration to `root: true` explicitly.
@@ -231,7 +231,7 @@ error envelope and `resource_metadata` challenge:
 plug AttestoMCP.Plug.ProtectResource,
   config: &MyApp.Attesto.config/0,
   replay_check: &MyApp.DPoPReplay.check_and_record/2,
-  resource: "/mcp",
+  resource_path: "/mcp",
   base_url: "https://mcp.example.com",
   resource_audience: :resource,
   scopes: [AttestoMCP.Scopes.tools_call()]
@@ -247,7 +247,8 @@ protection =
   AttestoMCP.Plug.ProtectResource.prepare(
     config: &MyApp.Attesto.config/0,
     replay_check: &MyApp.DPoPReplay.check_and_record/2,
-    resource: "/mcp",
+    resource_path: "/mcp",
+    base_url: "https://mcp.example.com",
     resource_audience: :resource
   )
 
@@ -306,10 +307,14 @@ metadata =
   )
 ```
 
+Router-mounted metadata requires `:config`, `:issuer`, or an explicit
+`:authorization_servers` list. The response carries `Cache-Control: no-store`;
+the request authority is never advertised as the authorization server.
+
 Authorization-server metadata belongs at the issuer:
 
 ```elixir
-AttestoMCP.Metadata.authorization_server(config,
+Attesto.Discovery.metadata(config,
   authorization_endpoint: "https://auth.example.com/oauth/authorize",
   token_endpoint_auth_methods_supported: ["client_secret_basic", "private_key_jwt"],
   registration_endpoint: "https://auth.example.com/oauth/register"
@@ -393,7 +398,7 @@ pipeline :mcp_auth do
   plug AttestoMCP.Plug.ProtectResource,
     config: &MyApp.Attesto.config/0,
     replay_check: &MyApp.DPoPReplay.check_and_record/2,
-    resource: "/mcp",
+    resource_path: "/mcp",
     scopes: [AttestoMCP.Scopes.tools_call()]
 end
 
@@ -489,13 +494,15 @@ callbacks do not provide a server namespace.
 
 ## Status
 
-A stable `2.x` release: the public API follows [semantic versioning](https://semver.org/) —
-minor and patch releases are backward-compatible, and breaking changes wait for
-a new major version. Pin to `~> 2.0`.
+A stable `2.x` release. Public functions remain compatible within 2.x where
+security permits. Security and correctness fixes may tighten validation or
+derived defaults in a minor release; the CHANGELOG identifies required
+migrations and behavior changes. Pin an exact minor when unchanged behavior is
+required. Pin to `~> 2.1` for the current security boundary.
 
 ## Security notes
 
-- Deploy AttestoMCP 2.0.0 with Attesto 2.5.0 or later in the 2.x line. This
+- Deploy AttestoMCP 2.1.0 with Attesto 2.6.0 or later in the 2.x line. This
   floor supplies the shared protected-resource metadata and strict URI policy
   used directly by the MCP boundary.
 - Use HTTPS for HTTP MCP servers.

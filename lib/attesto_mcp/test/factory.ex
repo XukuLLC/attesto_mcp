@@ -1,4 +1,4 @@
-if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Callbacks) do
+if Code.ensure_loaded?(ExUnit.Callbacks) do
   defmodule AttestoMCP.Test.Factory do
     @moduledoc """
     Test fixtures for exercising a host MCP server's Attesto pipeline.
@@ -10,9 +10,9 @@ if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Callbacks) do
     `Attesto.Config.new/1`, `Attesto.Keystore.Static`) plus JOSE, so it has no
     dependency on any Attesto-internal test scaffolding.
 
-    The module compiles only in development and test environments when `ExUnit`
-    is available (it registers an `ExUnit.Callbacks.on_exit/1` cleanup in
-    `config/0`), so it adds nothing to a host's production build.
+    The module is shipped for downstream test suites when `ExUnit` is
+    available. `config/0` registers an `ExUnit.Callbacks.on_exit/1` cleanup and
+    must be called from an ExUnit test process.
 
         defmodule MyApp.MCPAuthTest do
           use ExUnit.Case
@@ -27,6 +27,7 @@ if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Callbacks) do
     alias Attesto.Keystore.Static
     alias Attesto.Test.DPoP, as: TestDPoP
     alias Attesto.Token
+    alias AttestoMCP.Plug.Authenticate
 
     @issuer "https://auth.example.com"
     @audience "https://mcp.example.com/mcp"
@@ -109,12 +110,16 @@ if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Callbacks) do
           jti: Keyword.get_lazy(opts, :jti, fn -> "proof-" <> Integer.to_string(System.unique_integer([:positive])) end)
         )
 
-      {proof, Attesto.DPoP.compute_jkt(JOSE.JWK.to_public(jwk))}
+      {proof, dpop_jkt(jwk)}
     end
 
     @doc "Generate a fresh P-256 JWK for use as a DPoP proof key."
     @spec dpop_jwk() :: JOSE.JWK.t()
     def dpop_jwk, do: TestDPoP.generate_key()
+
+    @doc "Return the RFC 7638 thumbprint for a DPoP proof key."
+    @spec dpop_jkt(JOSE.JWK.t()) :: String.t()
+    def dpop_jkt(jwk), do: Attesto.DPoP.compute_jkt(JOSE.JWK.to_public(jwk))
 
     @doc "Build a self-signed certificate (DER) for exercising mTLS sender constraints."
     @spec self_signed_cert_der() :: binary()
@@ -126,6 +131,25 @@ if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Callbacks) do
     @doc "The audience the factory mints tokens for, usable as the request `htu`."
     @spec htu() :: String.t()
     def htu, do: @audience
+
+    @doc false
+    @spec htu(Plug.Conn.t()) :: String.t()
+    def htu(_conn), do: @audience
+
+    @doc "Run the AttestoMCP authentication plug with the factory request URI."
+    @spec authenticate(Plug.Conn.t(), Attesto.Config.t(), keyword()) :: Plug.Conn.t()
+    def authenticate(conn, config, opts \\ []) do
+      opts = Keyword.merge([config: config, htu: &__MODULE__.htu/1], opts)
+      Authenticate.call(conn, Authenticate.init(opts))
+    end
+
+    @doc false
+    @spec form_post(map()) :: Plug.Conn.t()
+    def form_post(params) do
+      :post
+      |> Plug.Test.conn("/mcp", params)
+      |> Plug.Conn.put_req_header("content-type", "application/x-www-form-urlencoded")
+    end
 
     defp signing_pem do
       JOSE.JWK.generate_key({:rsa, 2048}) |> JOSE.JWK.to_pem() |> elem(1)

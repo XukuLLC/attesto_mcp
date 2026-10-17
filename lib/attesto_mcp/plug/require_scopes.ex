@@ -28,6 +28,7 @@ defmodule AttestoMCP.Plug.RequireScopes do
 
   alias Attesto.Plug.OAuthError
   alias Attesto.Scope
+  alias AttestoMCP.Auth
 
   @claims_key :attesto_mcp_claims
   @scopes_key :attesto_mcp_scopes
@@ -83,7 +84,7 @@ defmodule AttestoMCP.Plug.RequireScopes do
         OAuthError.insufficient_scope(
           conn,
           opts.required,
-          scheme_of(conn.assigns[opts.claims_key]),
+          Auth.scheme(conn.assigns[opts.claims_key]),
           opts.transport
         )
 
@@ -109,7 +110,4 @@ defmodule AttestoMCP.Plug.RequireScopes do
         List.wrap(opts)
     end
   end
-
-  defp scheme_of(%{"cnf" => %{"jkt" => jkt}}) when is_binary(jkt), do: :dpop
-  defp scheme_of(_claims), do: :bearer
 end

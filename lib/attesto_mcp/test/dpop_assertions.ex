@@ -1,4 +1,4 @@
-if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Assertions) do
+if Code.ensure_loaded?(ExUnit.Assertions) do
   defmodule AttestoMCP.Test.DPoPAssertions do
     @moduledoc """
     Shipped ExUnit assertions for the DPoP sender-constraint contract.
@@ -20,8 +20,8 @@ if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Assertions) do
     (`Attesto.DPoP.compute_ath/1` via the factory), so they do not depend on any
     Attesto-internal test scaffolding.
 
-    The module compiles only in development and test environments when `ExUnit`
-    is available, so it adds nothing to a host's production build.
+    The module is shipped for downstream test suites when `ExUnit` is
+    available.
 
     ## Usage
 
@@ -70,7 +70,7 @@ if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Assertions) do
     """
     @spec assert_dpop_bound_bearer_rejected(plug_fun(), Attesto.Config.t(), keyword()) :: Plug.Conn.t()
     def assert_dpop_bound_bearer_rejected(plug_fun, config, opts \\ []) when is_function(plug_fun, 1) do
-      {_proof, jkt} = Factory.dpop_proof("placeholder")
+      jkt = Factory.dpop_jwk() |> Factory.dpop_jkt()
       token = Factory.access_token(config, token_opts(opts, dpop_jkt: jkt))
 
       conn =
@@ -102,7 +102,7 @@ if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Assertions) do
     @spec assert_dpop_proof_accepted(plug_fun(), Attesto.Config.t(), keyword()) :: Plug.Conn.t()
     def assert_dpop_proof_accepted(plug_fun, config, opts \\ []) when is_function(plug_fun, 1) do
       jwk = Factory.dpop_jwk()
-      {_unused, jkt} = Factory.dpop_proof("placeholder", jwk: jwk)
+      jkt = Factory.dpop_jkt(jwk)
       token = Factory.access_token(config, token_opts(opts, dpop_jkt: jkt))
       {proof, ^jkt} = Factory.dpop_proof(token, proof_opts(opts, jwk: jwk))
 

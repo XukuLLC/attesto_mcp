@@ -5,7 +5,6 @@ defmodule AttestoMCP.Plug.RequireScopesTest do
   import Plug.Conn
   import Plug.Test
 
-  alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Plug.RequireScopes
   alias AttestoMCP.Scopes
   alias AttestoMCP.Test.Factory
@@ -21,7 +20,7 @@ defmodule AttestoMCP.Plug.RequireScopesTest do
       :post
       |> conn("/mcp")
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config)
+      |> Factory.authenticate(config)
       |> require_scopes([Scopes.tools_call()])
 
     refute conn.halted
@@ -34,7 +33,7 @@ defmodule AttestoMCP.Plug.RequireScopesTest do
       :post
       |> conn("/mcp")
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config)
+      |> Factory.authenticate(config)
       |> require_scopes([Scopes.tools_call()])
 
     assert conn.halted
@@ -49,7 +48,7 @@ defmodule AttestoMCP.Plug.RequireScopesTest do
       :post
       |> conn("/mcp")
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config)
+      |> Factory.authenticate(config)
       |> RequireScopes.call(
         RequireScopes.init(
           scopes: [Scopes.tools_call()],
@@ -109,10 +108,6 @@ defmodule AttestoMCP.Plug.RequireScopesTest do
              scopes_key: :attesto_mcp_scopes,
              transport: []
            } = RequireScopes.init([scope])
-  end
-
-  defp authenticate(conn, config) do
-    Authenticate.call(conn, Authenticate.init(config: config, htu: fn _conn -> Factory.htu() end))
   end
 
   defp require_scopes(conn, scopes) do

@@ -25,7 +25,10 @@ defmodule AttestoMCP.Router do
 
         scope "/" do
           pipe_through :api
-          attesto_mcp_protected_resource_metadata "/mcp", scopes: ["mcp:tools:call"]
+          attesto_mcp_protected_resource_metadata "/mcp",
+            scopes: ["mcp:tools:call"],
+            config: {MyApp.Attesto, :config},
+            base_url: "https://mcp.example.com"
         end
       end
 
@@ -48,32 +51,40 @@ defmodule AttestoMCP.Router do
 
       # Serve no root document (each endpoint's WWW-Authenticate already points
       # clients at its own path-suffixed metadata):
-      attesto_mcp_protected_resource_metadata "/mcp/foo", scopes: ["foo:mcp:tools:call"], root: false
-      attesto_mcp_protected_resource_metadata "/mcp/bar", scopes: ["bar:mcp:tools:call"], root: false
+      attesto_mcp_protected_resource_metadata "/mcp/foo",
+        scopes: ["foo:mcp:tools:call"], config: {MyApp.Attesto, :config}, root: false
+      attesto_mcp_protected_resource_metadata "/mcp/bar",
+        scopes: ["bar:mcp:tools:call"], config: {MyApp.Attesto, :config}, root: false
 
       # Or nominate one resource as the root for legacy clients:
-      attesto_mcp_protected_resource_metadata "/mcp/foo", scopes: ["foo:mcp:tools:call"], root: true
-      attesto_mcp_protected_resource_metadata "/mcp/bar", scopes: ["bar:mcp:tools:call"]
+      attesto_mcp_protected_resource_metadata "/mcp/foo",
+        scopes: ["foo:mcp:tools:call"], config: {MyApp.Attesto, :config}, root: true
+      attesto_mcp_protected_resource_metadata "/mcp/bar",
+        scopes: ["bar:mcp:tools:call"], config: {MyApp.Attesto, :config}
 
   ## Options
 
   Options are forwarded to `AttestoMCP.Metadata.protected_resource/3`. The most
-  common is `:scopes` (served as `scopes_supported`); `:authorization_servers`,
-  `:resource_name`, `:tls_client_certificate_bound_access_tokens`, and the other
-  RFC 9728 fields are also accepted.
+  common is `:scopes` (served as `scopes_supported`). One of `:config`, `:issuer`,
+  or `:authorization_servers` is required so the authorization server never
+  comes from the request `Host`. `:resource_name`,
+  `:tls_client_certificate_bound_access_tokens`, and the other RFC 9728 fields
+  are also accepted.
 
   ## Pinning the origin behind a proxy
 
-  By default the served `resource` and `authorization_servers` are derived from
-  the live request connection. Behind a TLS-terminating reverse proxy that is
-  fragile (`http`/internal host) and spoofable (`X-Forwarded-Host`). Pass
-  `:base_url` (or `:origin`) to pin the origin instead - a `String.t()`, a
+  By default the served `resource` is derived from the live request connection;
+  `authorization_servers` is always explicit or comes from the configured
+  issuer. Behind a TLS-terminating reverse proxy, request-derived resource
+  origins are fragile (`http`/internal host) and spoofable (`Host` or rewritten
+  `X-Forwarded-Host`). Pass `:base_url` (or `:origin`) to pin the origin - a `String.t()`, a
   `&Mod.fun/1` capture, or a `{Mod, :fun}` tuple resolved at request time. Route
   `private` is compiled, so use a string, a remote function capture, or an MFA
   tuple - not an anonymous `fn`:
 
       attesto_mcp_protected_resource_metadata "/mcp",
         scopes: ["mcp:tools:call"],
+        config: {MyApp.Attesto, :config},
         base_url: "https://mcp.example.com"
 
   `AttestoMCP.Plug.ProtectResource` accepts the same `:base_url`/`:origin`, so
@@ -161,8 +172,9 @@ defmodule AttestoMCP.Router do
                 "place it inside `scope \"/\" do ... end` rather than a path-prefixed scope"
       end
 
-      resource_path = AttestoMCP.Router.normalize_resource_path!(resource_path)
+      resource_path = AttestoMCP.Metadata.normalize_resource_path!(resource_path)
       {root_choice, metadata_opts} = Keyword.pop(opts, :root, :auto)
+      AttestoMCP.Metadata.validate_metadata_options!(metadata_opts)
 
       if resource_path == "/" and root_choice == false do
         raise ArgumentError,
@@ -174,7 +186,8 @@ defmodule AttestoMCP.Router do
         attesto_mcp_resource_path: resource_path
       }
 
-      metadata_path = AttestoMCP.Router.protected_resource_metadata_path(resource_path)
+      metadata_path = AttestoMCP.Metadata.protected_resource_metadata_path(resource_path)
+      root_metadata_path = AttestoMCP.Metadata.protected_resource_metadata_path("/")
 
       get metadata_path,
           AttestoMCP.MetadataController,
@@ -184,8 +197,8 @@ defmodule AttestoMCP.Router do
       # `AttestoMCP.Router.mount_root?/2` runs the compile-time bookkeeping (and
       # raises on an ambiguous implicit root); we only emit the route here.
       if AttestoMCP.Router.mount_root?(__MODULE__, root_choice) and
-           metadata_path != "/.well-known/oauth-protected-resource" do
-        get "/.well-known/oauth-protected-resource",
+           metadata_path != root_metadata_path do
+        get root_metadata_path,
             AttestoMCP.MetadataController,
             :show,
             private: private
@@ -194,19 +207,12 @@ defmodule AttestoMCP.Router do
   end
 
   @doc false
-  @spec normalize_resource_path!(String.t()) :: String.t()
-  def normalize_resource_path!("/" <> _rest = resource_path), do: resource_path
-  def normalize_resource_path!(resource_path) when is_binary(resource_path), do: "/" <> resource_path
-
-  def normalize_resource_path!(_resource_path) do
-    raise ArgumentError, "resource_path must be a string"
-  end
+  @spec normalize_resource_path!(term()) :: String.t()
+  defdelegate normalize_resource_path!(resource_path), to: AttestoMCP.Metadata
 
   @doc false
   @spec protected_resource_metadata_path(String.t()) :: String.t()
-  def protected_resource_metadata_path("/"), do: "/.well-known/oauth-protected-resource"
-
-  def protected_resource_metadata_path(resource_path), do: "/.well-known/oauth-protected-resource" <> resource_path
+  defdelegate protected_resource_metadata_path(resource_path), to: AttestoMCP.Metadata
 
   @doc false
   # Decide (at compile time) whether the unsuffixed root document should be

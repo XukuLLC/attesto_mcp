@@ -11,7 +11,7 @@ permissions:
 
 jobs:
   minimum-consumer:
-    name: Minimum production consumer (Attesto 2.5.0)
+    name: Minimum production consumer (Attesto 2.6.0)
     runs-on: ubuntu-latest
 
     defaults:
@@ -23,10 +23,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Elixir
-        uses: erlef/setup-beam@v1.24.1
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
           elixir-version: "1.18.4"
           otp-version: "28.0"
@@ -80,16 +80,16 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Elixir
-        uses: erlef/setup-beam@v1.24.1
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
           elixir-version: ${{ matrix.elixir }}
           otp-version: ${{ matrix.otp }}
 
       - name: Restore dependencies cache
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: deps
           key: ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-mix-${{ hashFiles('**/mix.lock') }}
@@ -97,7 +97,7 @@ jobs:
             ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-mix-
 
       - name: Restore build cache
-        uses: actions/cache@v6.1.0
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: _build
           key: ${{ runner.os }}-${{ matrix.otp }}-${{ matrix.elixir }}-build-${{ hashFiles('**/mix.lock') }}-${{ hashFiles('**/mix.exs') }}
@@ -138,7 +138,7 @@ jobs:
         run: mix docs
 
   attesto-2-hex:
-    name: Published Attesto >= 2.5.0 compatibility
+    name: Published Attesto >= 2.6.0 compatibility
     runs-on: ubuntu-latest
 
     env:
@@ -146,10 +146,10 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v7.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Elixir
-        uses: erlef/setup-beam@v1.24.1
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
           elixir-version: "1.19.4"
           otp-version: "28.3"
@@ -167,7 +167,7 @@ jobs:
       - name: Assert published hardened Attesto dependency
         run: >-
           mix run --no-compile -e 'version = Application.spec(:attesto, :vsn) |> to_string();
-          unless Version.match?(version, ">= 2.5.0 and < 3.0.0"), do: System.halt(1)'
+          unless Version.match?(version, ">= 2.6.0 and < 3.0.0"), do: System.halt(1)'
 
       - name: Run tests against published Attesto 2
         run: mix test --trace

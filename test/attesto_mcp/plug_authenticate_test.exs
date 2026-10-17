@@ -22,7 +22,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       :post
       |> conn("/mcp")
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config)
+      |> Factory.authenticate(config)
 
     refute conn.halted
     assert conn.assigns.attesto_mcp_claims["sub"] == "usr_123"
@@ -35,8 +35,8 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
 
     conn =
       %{"access_token" => token}
-      |> form_post()
-      |> authenticate(config)
+      |> Factory.form_post()
+      |> Factory.authenticate(config)
 
     assert conn.halted
     assert conn.status == 401
@@ -50,8 +50,8 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
 
     conn =
       %{"access_token" => token}
-      |> form_post()
-      |> authenticate(config, bearer_methods: [:header, :body])
+      |> Factory.form_post()
+      |> Factory.authenticate(config, bearer_methods: [:header, :body])
 
     refute conn.halted
     assert conn.assigns.attesto_mcp_claims["sub"] == "usr_123"
@@ -65,7 +65,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       :post
       |> conn("/mcp")
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config)
+      |> Factory.authenticate(config)
 
     ctx = conn.assigns.attesto_context
     assert ctx.subject == "usr_123"
@@ -89,14 +89,14 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
 
   test "DPoP-bound token is rejected as bearer", %{config: config} do
     jwk = Factory.dpop_jwk()
-    {_proof, jkt} = Factory.dpop_proof("placeholder", jwk: jwk)
+    jkt = Factory.dpop_jkt(jwk)
     token = Factory.access_token(config, dpop_jkt: jkt)
 
     conn =
       :post
       |> conn("/mcp")
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config)
+      |> Factory.authenticate(config)
 
     assert conn.halted
     assert conn.status == 401
@@ -106,7 +106,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
 
   test "DPoP-bound token is accepted with a valid proof", %{config: config} do
     jwk = Factory.dpop_jwk()
-    {_unused, jkt} = Factory.dpop_proof("placeholder", jwk: jwk)
+    jkt = Factory.dpop_jkt(jwk)
     token = Factory.access_token(config, dpop_jkt: jkt)
     {proof, ^jkt} = Factory.dpop_proof(token, jwk: jwk)
 
@@ -115,7 +115,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       |> conn("/mcp")
       |> put_req_header("authorization", "DPoP " <> token)
       |> put_req_header("dpop", proof)
-      |> authenticate(config, replay_check: DPoPReplay.callback())
+      |> Factory.authenticate(config, replay_check: DPoPReplay.callback())
 
     refute conn.halted
     assert conn.assigns.attesto_mcp_sender == %{binding: :dpop, jkt: jkt}
@@ -130,7 +130,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       :post
       |> conn("/mcp")
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config)
+      |> Factory.authenticate(config)
 
     assert conn.halted
     assert conn.status == 401
@@ -150,7 +150,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       :post
       |> conn("/mcp")
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config, principal: principal)
+      |> Factory.authenticate(config, principal: principal)
 
     refute conn.halted
     assert conn.assigns.attesto_mcp_principal == %{subject: "usr_123"}
@@ -165,7 +165,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       |> conn("/mcp")
       |> assign(:attesto_mcp_principal, %{stale: true})
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config, principal: fn _claims, _sender -> {:ok, nil} end)
+      |> Factory.authenticate(config, principal: fn _claims, _sender -> {:ok, nil} end)
 
     refute conn.halted
     assert Map.has_key?(conn.assigns, :attesto_mcp_principal)
@@ -180,7 +180,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
         :post
         |> conn("/mcp")
         |> put_req_header("authorization", "Bearer " <> token)
-        |> authenticate(config, principal: fn _claims, _sender -> result end)
+        |> Factory.authenticate(config, principal: fn _claims, _sender -> result end)
 
       assert conn.halted
       assert conn.status == 401
@@ -200,7 +200,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     conn =
       :post
       |> conn("/mcp")
-      |> authenticate(config, send_error: send_error)
+      |> Factory.authenticate(config, send_error: send_error)
 
     assert conn.halted
     assert conn.status == 401
@@ -212,7 +212,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     conn =
       :post
       |> conn("/mcp")
-      |> authenticate(config,
+      |> Factory.authenticate(config,
         resource_metadata_url: "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
       )
 
@@ -225,29 +225,21 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     conn =
       :post
       |> conn("https://mcp.example.com/mcp/user")
-      |> authenticate(config, resource_path: "/mcp/user")
+      |> Factory.authenticate(config, resource_path: "/mcp/user")
 
     assert conn.halted
     assert [challenge] = get_resp_header(conn, "www-authenticate")
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/user")
   end
 
-  test "blank resource metadata URL is absent unless a resource path can derive it", %{config: config} do
-    without_path =
-      :post
-      |> conn("https://mcp.example.com/mcp")
-      |> authenticate(config, resource_metadata_url: "")
+  test "blank resource metadata URL fails during initialization", %{config: config} do
+    assert_raise ArgumentError, ~r/:resource_metadata_url/, fn ->
+      Authenticate.init(config: config, resource_metadata_url: "")
+    end
 
-    assert [challenge] = get_resp_header(without_path, "www-authenticate")
-    refute challenge =~ "resource_metadata="
-
-    with_path =
-      :post
-      |> conn("https://mcp.example.com/mcp")
-      |> authenticate(config, resource_metadata_url: "", resource_path: "/mcp")
-
-    assert [challenge] = get_resp_header(with_path, "www-authenticate")
-    assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+    assert_raise ArgumentError, ~r/:resource_metadata_url/, fn ->
+      Authenticate.init(config: config, resource_metadata_url: "", resource_path: "/mcp")
+    end
   end
 
   test "invalid resource metadata callback values fall back safely", %{config: config} do
@@ -255,7 +247,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       with_path =
         :post
         |> conn("https://mcp.example.com/mcp")
-        |> authenticate(config,
+        |> Factory.authenticate(config,
           resource_metadata_url: fn _conn -> invalid end,
           resource_path: "/mcp"
         )
@@ -266,7 +258,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       without_path =
         :post
         |> conn("https://mcp.example.com/mcp")
-        |> authenticate(config, resource_metadata_url: fn _conn -> invalid end)
+        |> Factory.authenticate(config, resource_metadata_url: fn _conn -> invalid end)
 
       assert [challenge] = get_resp_header(without_path, "www-authenticate")
       refute challenge =~ "resource_metadata="
@@ -275,7 +267,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     via_mfa =
       :post
       |> conn("https://mcp.example.com/mcp")
-      |> authenticate(config,
+      |> Factory.authenticate(config,
         resource_metadata_url: {__MODULE__, :metadata_url_result, [nil]},
         resource_path: "/mcp"
       )
@@ -284,7 +276,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
   end
 
-  test "unsafe resource metadata callback URLs are omitted by core", %{config: config} do
+  test "unsafe resource metadata callback URLs use a validated fallback", %{config: config} do
     unsafe_urls = [
       "javascript:alert(1)",
       "https://user:pass@mcp.example.com/metadata",
@@ -297,13 +289,13 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       conn =
         :post
         |> conn("https://mcp.example.com/mcp")
-        |> authenticate(config,
+        |> Factory.authenticate(config,
           resource_metadata_url: fn _conn -> unsafe end,
           resource_path: "/mcp"
         )
 
       assert [challenge] = get_resp_header(conn, "www-authenticate")
-      refute challenge =~ "resource_metadata="
+      assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
     end
   end
 
@@ -311,10 +303,24 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     conn =
       :post
       |> conn("http://localhost:4000/mcp")
-      |> authenticate(config,
+      |> Factory.authenticate(config,
         resource_metadata_url: fn _conn ->
           "http://localhost:4000/.well-known/oauth-protected-resource/mcp"
         end,
+        allow_http: true
+      )
+
+    assert [challenge] = get_resp_header(conn, "www-authenticate")
+    assert challenge =~ ~s(resource_metadata="http://localhost:4000/.well-known/oauth-protected-resource/mcp")
+  end
+
+  test "HTTP opt-in is preserved by the derived metadata resolver", %{config: config} do
+    conn =
+      :post
+      |> conn("http://localhost:4000/mcp")
+      |> Factory.authenticate(config,
+        resource_path: "/mcp",
+        base_url: "http://localhost:4000",
         allow_http: true
       )
 
@@ -330,7 +336,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       :post
       |> conn("/mcp/reports")
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config, resource_audience: resource)
+      |> Factory.authenticate(config, resource_audience: resource)
 
     refute conn.halted
     assert conn.assigns.attesto_mcp_claims["aud"] == resource
@@ -344,7 +350,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       :post
       |> conn("/mcp/reports")
       |> put_req_header("authorization", "Bearer " <> token)
-      |> authenticate(config, trusted_audiences: [resource])
+      |> Factory.authenticate(config, trusted_audiences: [resource])
 
     refute conn.halted
     assert conn.assigns.attesto_mcp_claims["aud"] == resource
@@ -354,11 +360,48 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     conn =
       :post
       |> conn("https://mcp.example.com/mcp")
-      |> authenticate(config, resource_metadata_url: {__MODULE__, :metadata_url})
+      |> Factory.authenticate(config, resource_metadata_url: {__MODULE__, :metadata_url})
 
     assert conn.halted
     assert [challenge] = get_resp_header(conn, "www-authenticate")
     assert challenge =~ ~s(resource_metadata="https://pinned.example/.well-known/oauth-protected-resource/mcp")
+  end
+
+  test "the 2.x metadata challenge compatibility helper remains callable" do
+    metadata_www_authenticate = Function.capture(Authenticate, :metadata_www_authenticate, 1)
+
+    callback =
+      metadata_www_authenticate.(
+        resource_metadata_url: "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+      )
+
+    conn = callback.(conn(:get, "https://mcp.example.com/mcp"), "Bearer")
+
+    assert get_resp_header(conn, "www-authenticate") == [
+             ~s(Bearer, resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+           ]
+
+    assert metadata_www_authenticate.(www_authenticate: fn conn, _ -> conn end) == nil
+  end
+
+  test "hidden 2.x metadata option and fallback helpers remain callable" do
+    opts =
+      Authenticate.oauth_error_metadata_opts(
+        resource_metadata_url: "https://mcp.example.com/metadata",
+        allow_http: true
+      )
+
+    assert opts == [allow_http: true, resource_metadata: "https://mcp.example.com/metadata"]
+    assert Authenticate.oauth_error_metadata_opts(www_authenticate: fn conn, _ -> conn end) == []
+
+    request = conn(:get, "https://mcp.example.com/mcp")
+    blank = fn _conn -> "" end
+    valid = fn _conn -> "https://mcp.example.com/custom" end
+
+    assert Authenticate.resolve_resource_metadata_url(request, valid, "fallback") ==
+             "https://mcp.example.com/custom"
+
+    assert Authenticate.resolve_resource_metadata_url(request, blank, "fallback") == "fallback"
   end
 
   def metadata_url(_conn), do: "https://pinned.example/.well-known/oauth-protected-resource/mcp"
@@ -370,7 +413,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     conn =
       :post
       |> conn("https://mcp.example.com/mcp/user")
-      |> authenticate(config,
+      |> Factory.authenticate(config,
         resource_path: "/mcp/user",
         resource_metadata_url: fn _conn -> raise "metadata callback must not run" end,
         www_authenticate: fn conn, _challenge ->
@@ -410,24 +453,5 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
 
     assert Keyword.fetch!(opts, :bearer_methods) == [:header]
     assert Keyword.fetch!(opts, :resource_path) == "/mcp"
-  end
-
-  defp authenticate(conn, config, opts \\ []) do
-    opts =
-      Keyword.merge(
-        [
-          config: config,
-          htu: fn _conn -> Factory.htu() end
-        ],
-        opts
-      )
-
-    Authenticate.call(conn, Authenticate.init(opts))
-  end
-
-  defp form_post(params) do
-    :post
-    |> conn("/mcp", params)
-    |> put_req_header("content-type", "application/x-www-form-urlencoded")
   end
 end

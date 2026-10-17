@@ -26,7 +26,12 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
   # The router is passed explicitly so the task never falls back to Igniter's
   # module-scanning router discovery, which is not deterministic when the whole
   # suite runs against the shared Igniter test scratch project.
-  @config_argv ["--config-module", "AttestoMCP.InstallerTestConfig"]
+  @config_argv [
+    "--config-module",
+    "AttestoMCP.InstallerTestConfig",
+    "--base-url",
+    "https://mcp.example.com"
+  ]
   @argv @config_argv ++ ["--resource-path", "/mcp", "--scopes", "mcp:use", "--router", "TestWeb.Router"]
   @alpha_argv @config_argv ++
                 [
@@ -58,11 +63,13 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
       assert source =~ "use AttestoMCP.Router"
       assert source =~ "attesto_mcp_protected_resource_metadata(\"/mcp\""
       assert source =~ ~s(scopes: ["mcp:use"])
+      assert source =~ "config: {AttestoMCP.InstallerTestConfig, :config}"
+      assert source =~ ~s(base_url: "https://mcp.example.com")
       assert source =~ "root: false"
 
       assert source =~ "AttestoMCP.Plug.ProtectResource"
       assert source =~ "config: {AttestoMCP.InstallerTestConfig, :config}"
-      assert source =~ ~s(resource: "/mcp")
+      assert source =~ ~s(resource_path: "/mcp")
       assert source =~ "resource_audience: :resource"
 
       # The installer delegates route generation to the public macro and never
@@ -80,7 +87,8 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
         ProtectResource.init(
           config: {InstallerTestConfig, :config},
           scopes: ["mcp:use"],
-          resource: "/mcp",
+          resource_path: "/mcp",
+          base_url: "https://mcp.example.com",
           resource_audience: :resource
         )
 
@@ -97,13 +105,24 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
 
     test "missing or malformed config options stop before router mutation" do
       cases = [
-        ["--resource-path", "/mcp", "--router", "TestWeb.Router"],
-        ["--config-module", "bad-module", "--resource-path", "/mcp", "--router", "TestWeb.Router"],
+        ["--base-url", "https://mcp.example.com", "--resource-path", "/mcp", "--router", "TestWeb.Router"],
+        [
+          "--config-module",
+          "bad-module",
+          "--base-url",
+          "https://mcp.example.com",
+          "--resource-path",
+          "/mcp",
+          "--router",
+          "TestWeb.Router"
+        ],
         [
           "--config-module",
           "AttestoMCP.InstallerTestConfig",
           "--config-function",
           "bad-name",
+          "--base-url",
+          "https://mcp.example.com",
           "--resource-path",
           "/mcp",
           "--router",
@@ -137,6 +156,25 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
         )
 
       assert_has_issue(changed, &(&1 =~ "config: {AttestoMCP.InstallerTestConfig, :alternate_config}"))
+      assert router_source(changed) == before
+    end
+
+    test "a rerun with a different canonical base URL reports a conflict" do
+      installed =
+        phx_test_project()
+        |> Igniter.compose_task("attesto_mcp.install", @argv)
+        |> apply_igniter!()
+
+      before = router_source(installed)
+
+      changed =
+        Igniter.compose_task(
+          installed,
+          "attesto_mcp.install",
+          List.replace_at(@argv, Enum.find_index(@argv, &(&1 == "https://mcp.example.com")), "https://other.example")
+        )
+
+      assert_has_issue(changed, &(&1 =~ "base_url: \"https://other.example\""))
       assert router_source(changed) == before
     end
 
@@ -197,16 +235,16 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
       assert occurrences(source, "resource_audience: :resource") == 2
 
       assert source =~
-               ~r/attesto_mcp_protected_resource_metadata\("\/mcp\/alpha".*?scopes: \["alpha:tools"\].*?root: false/s
+               ~r/attesto_mcp_protected_resource_metadata\("\/mcp\/alpha".*?scopes: \["alpha:tools"\].*?config: \{AttestoMCP.InstallerTestConfig, :config\}.*?base_url: "https:\/\/mcp.example.com".*?root: false/s
 
       assert source =~
-               ~r/attesto_mcp_protected_resource_metadata\("\/mcp\/beta".*?scopes: \["beta:tools"\].*?root: false/s
+               ~r/attesto_mcp_protected_resource_metadata\("\/mcp\/beta".*?scopes: \["beta:tools"\].*?config: \{AttestoMCP.InstallerTestConfig, :config\}.*?base_url: "https:\/\/mcp.example.com".*?root: false/s
 
       assert source =~
-               ~r/Plug\.ProtectResource.*?scopes: \["alpha:tools"\].*?resource: "\/mcp\/alpha".*?resource_audience: :resource/s
+               ~r/Plug\.ProtectResource.*?scopes: \["alpha:tools"\].*?resource_path: "\/mcp\/alpha".*?base_url: "https:\/\/mcp.example.com".*?resource_audience: :resource/s
 
       assert source =~
-               ~r/Plug\.ProtectResource.*?scopes: \["beta:tools"\].*?resource: "\/mcp\/beta".*?resource_audience: :resource/s
+               ~r/Plug\.ProtectResource.*?scopes: \["beta:tools"\].*?resource_path: "\/mcp\/beta".*?base_url: "https:\/\/mcp.example.com".*?resource_audience: :resource/s
 
       refute source =~ "AttestoMCP.MetadataController"
       refute source =~ ~s(get("/oauth-protected-resource")
@@ -216,6 +254,8 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
       foo_dash = [
         "--config-module",
         "AttestoMCP.InstallerTestConfig",
+        "--base-url",
+        "https://mcp.example.com",
         "--resource-path",
         "/mcp/foo-bar",
         "--scopes",
@@ -227,6 +267,8 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
       foo_slash = [
         "--config-module",
         "AttestoMCP.InstallerTestConfig",
+        "--base-url",
+        "https://mcp.example.com",
         "--resource-path",
         "/mcp/foo/bar",
         "--scopes",
@@ -252,16 +294,47 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
       assert length(Enum.uniq(pipeline_names)) == 2
     end
 
-    test "the notice explains request-derived origins and reverse-proxy pinning" do
+    test "the notice reports the pinned canonical origin" do
       igniter =
         phx_test_project()
         |> Igniter.compose_task("attesto_mcp.install", @argv)
 
       assert_has_notice(igniter, fn notice ->
-        notice =~ "both metadata and protection derive the resource" and
-          notice =~ ":base_url" and notice =~ ":origin" and
-          notice =~ "reverse proxy"
+        notice =~ "canonical resource origin is pinned" and
+          notice =~ "https://mcp.example.com" and
+          notice =~ "authorization server"
       end)
+    end
+
+    test "a missing or malformed base URL stops before router mutation" do
+      cases = [
+        ["--config-module", "AttestoMCP.InstallerTestConfig", "--router", "TestWeb.Router"],
+        [
+          "--config-module",
+          "AttestoMCP.InstallerTestConfig",
+          "--base-url",
+          "mcp.example.com",
+          "--router",
+          "TestWeb.Router"
+        ],
+        [
+          "--config-module",
+          "AttestoMCP.InstallerTestConfig",
+          "--base-url",
+          "http://mcp.example.com",
+          "--router",
+          "TestWeb.Router"
+        ]
+      ]
+
+      for argv <- cases do
+        project = phx_test_project()
+        before = router_source(project)
+        result = Igniter.compose_task(project, "attesto_mcp.install", argv)
+
+        assert_has_issue(result, &(&1 =~ "--base-url"))
+        assert router_source(result) == before
+      end
     end
 
     test "rejects degenerate resource paths before changing the router" do

@@ -9,31 +9,32 @@ defmodule AttestoMCP.Metadata do
 
   ## Origin pinning behind a proxy
 
-  The `resource` identifier and the default `authorization_servers` are origin
-  values: a client reads them to learn where it is and where to get a token.
-  By default they are derived from the live request connection
-  (`conn.scheme`/`conn.host`/`conn.port`), which is correct for a simple
-  single-host deployment.
+  The `resource` identifier identifies this server, while
+  `authorization_servers` identifies the issuer a client must use to obtain a
+  token. A resource identifier may be derived from the live connection when it
+  is used only for discovery. Any authentication policy that derives its token
+  audience from the resource identifier must pin the origin.
 
   Behind a TLS-terminating reverse proxy that derivation is both fragile and a
-  spoofing vector: `conn.scheme` is often `http`, `conn.host` is whatever
-  `X-Forwarded-*` rewriting produced, and an attacker who can set
-  `X-Forwarded-Host` could make the metadata advertise an attacker-controlled
-  `resource` or authorization server. A FAPI-grade deployment should pin both
-  instead of trusting the request:
+  spoofing vector: `conn.scheme` is often `http`, and `conn.host` reflects the
+  request `Host` or whatever `X-Forwarded-*` rewriting produced. An attacker
+  can therefore influence an unpinned `resource`. Pin the resource origin when
+  it drives authorization policy, and identify the authorization server from a
+  trusted configuration source:
 
     * The **`resource`** identifier and the well-known metadata URL use
       `resolve_origin/2` - the *resource server* origin, pinned via `:base_url`
       or `:origin` (a `String.t()`, a `(Plug.Conn.t() -> String.t())` callback,
       or a `{module, fun}` / `{module, fun, args}` tuple), falling back to the
-      live request origin.
+      live request origin only when neither option is present. An explicitly
+      configured pin that is invalid raises instead of falling back.
     * **`authorization_servers`** defaults to the `:config` issuer (or an
       explicit `:issuer` string) when one is supplied - the authorization server
       the host already trusts for token verification, advertised verbatim - and
-      otherwise to the resource origin. The issuer is deliberately NOT used as
-      the `resource` origin: RFC 9728 keeps the protected resource and its
-      authorization server distinct, and in a FAPI deployment they are usually
-      different hosts.
+      otherwise must be supplied explicitly with `:authorization_servers`.
+      The issuer is deliberately NOT used as the `resource` origin: RFC 9728
+      keeps the protected resource and its authorization server distinct, and
+      in a FAPI deployment they are usually different hosts.
 
   Either can still be overridden outright with an explicit `:resource` /
   `:authorization_servers` opt. See `guides/proxy_origin.md` for the recipe.
@@ -43,7 +44,11 @@ defmodule AttestoMCP.Metadata do
   alias Attesto.Discovery
   alias Attesto.DPoP
   alias Attesto.ProtectedResourceMetadata
+  alias Attesto.URI, as: AttestoURI
+  alias AttestoMCP.Auth
   alias AttestoMCP.Scopes
+
+  @well_known_path "/.well-known/oauth-protected-resource"
 
   @doc """
   Build an RFC 9728 protected-resource metadata document.
@@ -82,8 +87,8 @@ defmodule AttestoMCP.Metadata do
   `"/mcp/admin"`. The `resource` identifier is `resolve_origin/2` (the resource
   server origin, pinned via `:base_url`/`:origin`) joined with that path.
   `:authorization_servers` defaults to the `:config` issuer (or an explicit
-  `:issuer` string) when one is given - the trusted authorization server,
-  advertised verbatim - and otherwise to the resource origin.
+  `:issuer` string) when one is given. One of those sources is required; the
+  authorization server is never inferred from the request authority.
 
   An explicit `:resource` or `:authorization_servers` opt overrides the derived
   value, and short-circuits its derivation: a pinned origin / issuer callback is
@@ -91,20 +96,20 @@ defmodule AttestoMCP.Metadata do
   """
   @spec protected_resource(Plug.Conn.t(), String.t(), keyword()) :: %{required(String.t()) => term()}
   def protected_resource(%Plug.Conn{} = conn, resource_path, opts \\ []) when is_binary(resource_path) do
+    validate_metadata_options!(opts)
+
     derive_resource? = not Keyword.has_key?(opts, :resource)
     derive_servers? = not Keyword.has_key?(opts, :authorization_servers)
-    issuer = if derive_servers?, do: configured_issuer(opts)
+    issuer = if derive_servers?, do: configured_issuer!(opts)
 
-    # Resolve the resource origin AT MOST ONCE, and only when a derived value
-    # actually needs it: an explicit `:resource`/`:authorization_servers` never
-    # triggers an origin/issuer callback, and `resource` + the `authorization_servers`
-    # fallback share the same resolved origin (so a stateful callback cannot make
-    # the document internally inconsistent).
-    origin = if derive_resource? or (derive_servers? and is_nil(issuer)), do: resolve_origin(conn, opts)
+    # Resolve the resource origin AT MOST ONCE, and only when `resource` needs
+    # derivation. The authorization server has its own mandatory trust source
+    # and never comes from this request-derived value.
+    origin = if derive_resource?, do: resolve_origin(conn, opts)
 
     opts
-    |> maybe_put(derive_resource?, :resource, fn -> origin <> normalize_path(resource_path) end)
-    |> maybe_put(derive_servers?, :authorization_servers, fn -> if issuer, do: [issuer], else: [origin] end)
+    |> maybe_put(derive_resource?, :resource, fn -> origin <> normalize_resource_path!(resource_path) end)
+    |> maybe_put(derive_servers?, :authorization_servers, fn -> [issuer] end)
     |> Keyword.drop([:base_url, :origin, :issuer, :config])
     |> protected_resource()
   end
@@ -115,12 +120,13 @@ defmodule AttestoMCP.Metadata do
       iex> AttestoMCP.Metadata.protected_resource_url("https://mcp.example.com", "/mcp")
       "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
 
-  A Plug connection can also be passed as the first argument.
+  A Plug connection can also be passed as the first argument. The legacy
+  two-argument connection form remains available; new code should pass an
+  options list as the third argument so origin pinning is explicit.
   """
   @spec protected_resource_url(String.t(), String.t()) :: String.t()
   def protected_resource_url(base_url, resource_path) when is_binary(base_url) and is_binary(resource_path) do
-    String.trim_trailing(base_url, "/") <>
-      "/.well-known/oauth-protected-resource" <> well_known_resource_suffix(resource_path)
+    String.trim_trailing(base_url, "/") <> protected_resource_metadata_path(resource_path)
   end
 
   @spec protected_resource_url(Plug.Conn.t(), String.t()) :: String.t()
@@ -158,13 +164,60 @@ defmodule AttestoMCP.Metadata do
        at request time;
     2. the live request origin (`conn.scheme`/`conn.host`/`conn.port`).
 
-  A blank or non-binary pin is treated as "not configured" and falls back to the
-  request origin; a trailing slash is trimmed so the result joins cleanly with a
-  resource path.
+  When neither pin is present, the request origin is used. Once either option is
+  present, it is configuration: invalid literal values and invalid callback
+  results raise instead of falling back to the request authority. A trailing
+  slash is trimmed so the result joins cleanly with a resource path.
   """
   @spec resolve_origin(Plug.Conn.t(), keyword()) :: String.t()
   def resolve_origin(%Plug.Conn{} = conn, opts) when is_list(opts) do
-    pinned_origin(opts, conn) || base_url(conn)
+    case origin_spec(opts) do
+      :none -> base_url(conn)
+      {:configured, key, spec} -> resolve_pinned_origin!(key, spec, conn, opts)
+    end
+  end
+
+  @doc false
+  @spec validate_origin_options!(keyword()) :: :ok
+  def validate_origin_options!(opts) when is_list(opts) do
+    Enum.each([:base_url, :origin], fn key ->
+      if Keyword.has_key?(opts, key), do: validate_origin_spec!(key, Keyword.fetch!(opts, key), opts)
+    end)
+
+    :ok
+  end
+
+  @doc false
+  @spec require_pinned_origin!(keyword()) :: :ok
+  def require_pinned_origin!(opts) when is_list(opts) do
+    validate_origin_options!(opts)
+
+    if Enum.any?([:base_url, :origin], &Keyword.has_key?(opts, &1)) do
+      :ok
+    else
+      raise ArgumentError,
+            "resource_audience: :resource requires a pinned :base_url or :origin; " <>
+              "the request Host cannot define an access-token audience"
+    end
+  end
+
+  @doc false
+  @spec validate_metadata_options!(keyword()) :: :ok
+  def validate_metadata_options!(opts) when is_list(opts) do
+    validate_origin_options!(opts)
+
+    if !Enum.any?([:authorization_servers, :issuer, :config], &Keyword.has_key?(opts, &1)) do
+      raise ArgumentError,
+            "protected-resource metadata requires :authorization_servers, :issuer, or :config; " <>
+              "the request Host cannot define the authorization server"
+    end
+
+    case Keyword.fetch(opts, :authorization_servers) do
+      {:ok, servers} -> validate_authorization_servers!(servers)
+      :error -> validate_authorization_source!(opts)
+    end
+
+    :ok
   end
 
   @doc """
@@ -181,28 +234,58 @@ defmodule AttestoMCP.Metadata do
   """
   @spec resource_identifier(Plug.Conn.t(), String.t(), keyword()) :: String.t()
   def resource_identifier(%Plug.Conn{} = conn, resource_path, opts \\ []) when is_binary(resource_path) do
-    resolve_origin(conn, opts) <> normalize_path(resource_path)
+    resolve_origin(conn, opts) <> normalize_resource_path!(resource_path)
   end
 
-  @doc """
-  Build the `WWW-Authenticate` auth-param value for RFC 9728 metadata discovery.
-  """
+  @doc false
+  @deprecated "Use Attesto.Plug.OAuthError's :resource_metadata option"
   @spec resource_metadata_param(String.t()) :: String.t()
   def resource_metadata_param(url) when is_binary(url), do: ~s(resource_metadata="#{escape(url)}")
 
-  @doc """
-  Append `resource_metadata` to a `WWW-Authenticate` challenge.
-  """
+  @doc false
+  @deprecated "Use Attesto.Plug.OAuthError's :resource_metadata option"
   @spec append_resource_metadata(String.t(), String.t()) :: String.t()
   def append_resource_metadata(challenge, url) when is_binary(challenge) and is_binary(url) do
     challenge <> ", " <> resource_metadata_param(url)
   end
 
-  @doc """
-  Build the authorization-server metadata document by delegating to Attesto.
-  """
+  @doc false
+  @deprecated "Use Attesto.Discovery.metadata/2"
   @spec authorization_server(Config.t(), keyword()) :: %{required(String.t()) => term()}
   def authorization_server(%Config{} = config, opts \\ []), do: Discovery.metadata(config, opts)
+
+  @doc false
+  @spec normalize_resource_path!(term(), keyword()) :: String.t()
+  def normalize_resource_path!(resource_path, opts \\ [])
+
+  def normalize_resource_path!(resource_path, opts) when is_binary(resource_path) and is_list(opts) do
+    normalized = if String.starts_with?(resource_path, "/"), do: resource_path, else: "/" <> resource_path
+    allow_root? = Keyword.get(opts, :allow_root, true)
+
+    invalid? =
+      not String.valid?(normalized) or
+        String.contains?(normalized, ["?", "#"]) or
+        Enum.any?(String.split(normalized, "/"), &(&1 in [".", ".."])) or
+        (not allow_root? and normalized == "/")
+
+    if invalid? do
+      raise ArgumentError,
+            "resource_path must be a plain#{if allow_root?, do: "", else: " non-root"} path without dot segments, query, or fragment"
+    end
+
+    normalized
+  end
+
+  def normalize_resource_path!(_resource_path, _opts), do: raise(ArgumentError, "resource_path must be a string")
+
+  @doc false
+  @spec protected_resource_metadata_path(String.t()) :: String.t()
+  def protected_resource_metadata_path(resource_path) do
+    case normalize_resource_path!(resource_path) do
+      "/" -> @well_known_path
+      path -> @well_known_path <> path
+    end
+  end
 
   # The MCP profile publishes these values by default. A caller-supplied `nil`
   # historically meant "use the default", so normalize it before handing field
@@ -223,21 +306,39 @@ defmodule AttestoMCP.Metadata do
     |> String.replace("\"", "\\\"")
   end
 
-  # The resource-server origin (RFC 9728 `resource`). A blank or non-binary
-  # resolution is treated as "not configured" so a misconfigured pin fails back
-  # to the request origin rather than producing relative/empty metadata. Trailing
-  # slashes are trimmed because this value is joined with a resource path.
-  defp pinned_origin(opts, conn) do
-    # Resolve each key independently: a blank/non-binary `:base_url` yields to
-    # `:origin` (rather than short-circuiting on `"" || ...`, where blank is
-    # truthy), and a blank/non-binary `:origin` yields to the request origin.
-    pinned(Keyword.get(opts, :base_url), conn) || pinned(Keyword.get(opts, :origin), conn)
+  defp origin_spec(opts) do
+    cond do
+      Keyword.has_key?(opts, :base_url) -> {:configured, :base_url, Keyword.fetch!(opts, :base_url)}
+      Keyword.has_key?(opts, :origin) -> {:configured, :origin, Keyword.fetch!(opts, :origin)}
+      true -> :none
+    end
   end
 
-  defp pinned(spec, conn) do
-    case invoke_origin(spec, conn) do
-      url when is_binary(url) -> validate_origin(String.trim_trailing(url, "/"))
-      _ -> nil
+  defp resolve_pinned_origin!(key, spec, conn, opts) do
+    resolved = if is_binary(spec), do: spec, else: Auth.invoke(spec, [conn])
+
+    case resolved do
+      url when is_binary(url) -> validate_origin_value!(key, url, opts)
+      _ -> raise_invalid_origin!(key)
+    end
+  end
+
+  defp validate_origin_spec!(key, url, opts) when is_binary(url), do: validate_origin_value!(key, url, opts)
+  defp validate_origin_spec!(_key, fun, _opts) when is_function(fun, 1), do: :ok
+
+  defp validate_origin_spec!(_key, {module, fun}, _opts) when is_atom(module) and is_atom(fun), do: :ok
+
+  defp validate_origin_spec!(_key, {module, fun, args}, _opts) when is_atom(module) and is_atom(fun) and is_list(args),
+    do: :ok
+
+  defp validate_origin_spec!(key, _spec, _opts), do: raise_invalid_origin!(key)
+
+  defp validate_origin_value!(key, url, opts) do
+    trimmed = String.trim_trailing(url, "/")
+
+    case validate_origin(trimmed, Keyword.get(opts, :allow_http, false)) do
+      {:ok, origin} -> origin
+      :error -> raise_invalid_origin!(key)
     end
   end
 
@@ -246,49 +347,79 @@ defmodule AttestoMCP.Metadata do
   # a non-empty host, with no userinfo/query/fragment - so blank, relative, or
   # malformed pins ("", "/", "///", "/prefix", "mcp.example.com", "://x",
   # "https:///path", "https://u:p@h", "https://h?x=1", "https://h#f") are rejected
-  # and yield to the next key / the request origin, rather than concatenating into
-  # a relative, authority-less, or credential-leaking `resource` / well-known URL.
-  # A port and a path prefix are allowed (the latter for path-prefix proxies).
-  defp validate_origin(trimmed) do
-    case URI.new(trimmed) do
-      {:ok, %URI{scheme: scheme, host: host, userinfo: nil, query: nil, fragment: nil}}
-      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
-        trimmed
-
-      _ ->
-        nil
+  # and raise rather than concatenating into a relative, authority-less, or
+  # credential-leaking `resource` / well-known URL. A port and a path prefix are
+  # allowed (the latter for path-prefix proxies).
+  defp validate_origin(trimmed, allow_http?) when is_boolean(allow_http?) do
+    with true <- AttestoURI.https_identifier?(trimmed, allow_http: allow_http?),
+         {:ok, %URI{query: nil}} <- URI.new(trimmed) do
+      {:ok, trimmed}
+    else
+      _ -> :error
     end
   end
 
-  defp invoke_origin(url, _conn) when is_binary(url), do: url
-  defp invoke_origin(fun, conn) when is_function(fun, 1), do: fun.(conn)
+  defp validate_origin(_trimmed, _allow_http?), do: :error
 
-  defp invoke_origin({module, fun}, conn) when is_atom(module) and is_atom(fun), do: apply(module, fun, [conn])
-
-  defp invoke_origin({module, fun, args}, conn) when is_atom(module) and is_atom(fun) and is_list(args),
-    do: apply(module, fun, [conn | args])
-
-  defp invoke_origin(_other, _conn), do: nil
+  defp raise_invalid_origin!(key) do
+    raise ArgumentError,
+          "#{inspect(key)} must resolve to an absolute HTTPS origin without userinfo, query, or fragment; " <>
+            "set allow_http: true only for a deliberate development endpoint"
+  end
 
   # The authorization server is advertised verbatim: an issuer identifier is
   # compared by exact string match (RFC 8414 / OIDC Discovery), so - unlike a
   # resource origin - its trailing slash MUST be preserved or discovery breaks.
   #
-  # A blank explicit `:issuer` is ignored (falls through to `:config`) rather
-  # than publishing `[""]` or overriding a valid configured issuer.
-  defp configured_issuer(opts) do
-    case Keyword.get(opts, :issuer) do
-      issuer when is_binary(issuer) and issuer != "" -> issuer
-      _ -> config_issuer(Keyword.get(opts, :config))
+  # An explicit `:issuer` is authoritative. A malformed explicit value fails
+  # closed rather than falling through to a different config issuer.
+  defp configured_issuer!(opts) do
+    issuer =
+      case Keyword.fetch(opts, :issuer) do
+        {:ok, issuer} -> issuer
+        :error -> config_issuer(Keyword.get(opts, :config))
+      end
+
+    if valid_issuer?(issuer) do
+      issuer
+    else
+      raise ArgumentError,
+            "protected-resource metadata requires :authorization_servers, a valid HTTPS :issuer, " <>
+              "or :config resolving to an Attesto config with a valid HTTPS issuer"
     end
   end
 
-  defp config_issuer(%Config{issuer: issuer}) when is_binary(issuer), do: issuer
-  defp config_issuer(fun) when is_function(fun, 0), do: config_issuer(fun.())
-  defp config_issuer({module, fun}) when is_atom(module) and is_atom(fun), do: config_issuer(apply(module, fun, []))
+  defp validate_authorization_source!(opts) do
+    case Keyword.fetch(opts, :issuer) do
+      {:ok, issuer} when is_binary(issuer) ->
+        if valid_issuer?(issuer), do: :ok, else: raise(ArgumentError, ":issuer must be a valid HTTPS issuer identifier")
 
-  defp config_issuer({module, fun, args}) when is_atom(module) and is_atom(fun) and is_list(args),
-    do: config_issuer(apply(module, fun, args))
+      {:ok, _invalid} ->
+        raise ArgumentError, ":issuer must be a valid HTTPS issuer identifier"
+
+      :error ->
+        validate_config_source!(Keyword.fetch!(opts, :config))
+    end
+  end
+
+  defp validate_config_source!(%Config{}), do: :ok
+  defp validate_config_source!(fun) when is_function(fun, 0), do: :ok
+  defp validate_config_source!({module, fun}) when is_atom(module) and is_atom(fun), do: :ok
+
+  defp validate_config_source!({module, fun, args}) when is_atom(module) and is_atom(fun) and is_list(args), do: :ok
+
+  defp validate_config_source!(_invalid) do
+    raise ArgumentError, ":config must be an Attesto config, a zero-arity function, or an MFA tuple"
+  end
+
+  defp config_issuer(%Config{issuer: issuer}) when is_binary(issuer), do: issuer
+  defp config_issuer(callback) when is_function(callback, 0), do: config_issuer(Auth.invoke(callback, []))
+
+  defp config_issuer({module, fun} = callback) when is_atom(module) and is_atom(fun),
+    do: config_issuer(Auth.invoke(callback, []))
+
+  defp config_issuer({module, fun, args} = callback) when is_atom(module) and is_atom(fun) and is_list(args),
+    do: config_issuer(Auth.invoke(callback, []))
 
   defp config_issuer(_), do: nil
 
@@ -315,46 +446,13 @@ defmodule AttestoMCP.Metadata do
   end
 
   defp valid_issuer?(issuer) when is_binary(issuer) and issuer != "" do
-    case parse_uri(issuer) do
-      {:ok, %URI{scheme: "https", host: host, userinfo: nil, query: nil, fragment: nil}}
-      when is_binary(host) and host != "" ->
-        valid_percent_encoding?(issuer)
-
-      _ ->
-        false
+    with true <- AttestoURI.https_identifier?(issuer),
+         {:ok, %URI{query: nil}} <- URI.new(issuer) do
+      true
+    else
+      _ -> false
     end
   end
 
   defp valid_issuer?(_issuer), do: false
-
-  defp parse_uri(value) do
-    if String.valid?(value), do: URI.new(value), else: {:error, :invalid_utf8}
-  rescue
-    _exception -> {:error, :invalid_uri}
-  catch
-    _kind, _reason -> {:error, :invalid_uri}
-  end
-
-  defp valid_percent_encoding?(value) do
-    value
-    |> :binary.bin_to_list()
-    |> valid_percent_bytes?()
-  end
-
-  defp valid_percent_bytes?([]), do: true
-
-  defp valid_percent_bytes?([?%, hi, lo | rest]) do
-    hex_digit?(hi) and hex_digit?(lo) and valid_percent_bytes?(rest)
-  end
-
-  defp valid_percent_bytes?([?% | _rest]), do: false
-  defp valid_percent_bytes?([_byte | rest]), do: valid_percent_bytes?(rest)
-
-  defp hex_digit?(byte), do: byte in ?0..?9 or byte in ?A..?F or byte in ?a..?f
-
-  defp well_known_resource_suffix("/"), do: ""
-  defp well_known_resource_suffix(resource_path), do: normalize_path(resource_path)
-
-  defp normalize_path("/" <> _rest = path), do: path
-  defp normalize_path(path), do: "/" <> path
 end

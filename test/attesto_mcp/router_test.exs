@@ -27,20 +27,26 @@ defmodule AttestoMCP.RouterTest do
       # More than one resource, so the root document must be claimed explicitly.
       attesto_mcp_protected_resource_metadata "/mcp/foo",
         scopes: [Scopes.server("foo", :tools_call)],
+        issuer: "https://auth.example.com",
         root: true
 
-      attesto_mcp_protected_resource_metadata "/mcp/bar", scopes: [Scopes.server("bar", :tools_call)]
+      attesto_mcp_protected_resource_metadata "/mcp/bar",
+        scopes: [Scopes.server("bar", :tools_call)],
+        issuer: "https://auth.example.com"
 
       attesto_mcp_protected_resource_metadata "/mcp/pinned",
         scopes: [Scopes.server("pinned", :tools_call)],
+        issuer: "https://auth.example.com",
         base_url: "https://canonical.example"
 
       attesto_mcp_protected_resource_metadata "/mcp/tuple",
         scopes: [Scopes.server("tuple", :tools_call)],
+        issuer: "https://auth.example.com",
         base_url: {Origins, :canonical}
 
       attesto_mcp_protected_resource_metadata "mcp/no-leading",
-        scopes: [Scopes.server("normalized", :tools_call)]
+        scopes: [Scopes.server("normalized", :tools_call)],
+        issuer: "https://auth.example.com"
     end
   end
 
@@ -48,7 +54,7 @@ defmodule AttestoMCP.RouterTest do
     metadata = get_metadata("/.well-known/oauth-protected-resource/mcp/foo")
 
     assert metadata["resource"] == "https://mcp.example.com/mcp/foo"
-    assert metadata["authorization_servers"] == ["https://mcp.example.com"]
+    assert metadata["authorization_servers"] == ["https://auth.example.com"]
     assert metadata["scopes_supported"] == [Scopes.server("foo", :tools_call)]
   end
 
@@ -77,7 +83,8 @@ defmodule AttestoMCP.RouterTest do
     assert metadata["resource"] ==
              AttestoMCP.Metadata.protected_resource(
                build_conn("/.well-known/oauth-protected-resource/mcp/foo"),
-               "/mcp/foo"
+               "/mcp/foo",
+               issuer: "https://auth.example.com"
              )["resource"]
   end
 
@@ -114,7 +121,10 @@ defmodule AttestoMCP.RouterTest do
       use AttestoMCP.Router
 
       scope "/api" do
-        attesto_mcp_protected_resource_metadata "/mcp", scopes: ["mcp:use"], root: false
+        attesto_mcp_protected_resource_metadata "/mcp",
+          scopes: ["mcp:use"],
+          issuer: "https://auth.example.com",
+          root: false
       end
     end
     """
@@ -122,6 +132,58 @@ defmodule AttestoMCP.RouterTest do
     assert_raise ArgumentError, ~r/must be declared at the router root/, fn ->
       Code.compile_string(source)
     end
+  end
+
+  test "refuses a metadata route without an explicit authorization-server source" do
+    module = "AttestoMCP.UnboundAuthorizationServerRouter#{System.unique_integer([:positive])}"
+
+    source = """
+    defmodule #{module} do
+      use Phoenix.Router
+      use AttestoMCP.Router
+
+      scope "/" do
+        attesto_mcp_protected_resource_metadata "/mcp", scopes: ["mcp:use"], root: false
+      end
+    end
+    """
+
+    assert_raise ArgumentError, ~r/request Host cannot define the authorization server/, fn ->
+      Code.compile_string(source)
+    end
+  end
+
+  test "refuses a malformed literal origin pin at router compilation" do
+    module = "AttestoMCP.MalformedOriginRouter#{System.unique_integer([:positive])}"
+
+    source = """
+    defmodule #{module} do
+      use Phoenix.Router
+      use AttestoMCP.Router
+
+      scope "/" do
+        attesto_mcp_protected_resource_metadata "/mcp",
+          scopes: ["mcp:use"],
+          issuer: "https://auth.example.com",
+          base_url: "mcp.example.com",
+          root: false
+      end
+    end
+    """
+
+    assert_raise ArgumentError, ~r/:base_url/, fn ->
+      Code.compile_string(source)
+    end
+  end
+
+  test "serves protected-resource metadata with no-store caching" do
+    conn =
+      "/.well-known/oauth-protected-resource/mcp/foo"
+      |> build_conn()
+      |> TestRouter.call(TestRouter.init([]))
+
+    assert conn.status == 200
+    assert get_resp_header(conn, "cache-control") == ["no-store"]
   end
 
   defp get_metadata(path) do

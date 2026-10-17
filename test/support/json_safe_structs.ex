@@ -1,3 +1,8 @@
+defmodule AttestoMCP.Test.BareStruct do
+  @moduledoc false
+  defstruct [:x]
+end
+
 defmodule AttestoMCP.Test.ValidJasonStruct do
   @moduledoc false
   @derive Jason.Encoder

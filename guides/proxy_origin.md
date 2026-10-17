@@ -7,9 +7,10 @@ A protected MCP server publishes two origin values a client trusts implicitly:
   `resource_metadata` challenge URL, and
 - **`authorization_servers`** — *where the client goes to get a token*.
 
-By default `attesto_mcp` derives both from the live request connection
-(`conn.scheme` + `conn.host` + `conn.port`). For a single host that is correct
-and needs no configuration.
+`attesto_mcp` can derive the resource origin from the live request connection
+when it is used only for discovery. It never derives `authorization_servers`
+from the request authority. A metadata route must supply `:config`, `:issuer`,
+or `:authorization_servers`.
 
 ## Why deriving from the request is wrong behind a proxy
 
@@ -19,15 +20,13 @@ When TLS is terminated upstream and the app sees proxied requests:
   whatever `X-Forwarded-*` rewriting produced, so the advertised `resource` can
   come out as `http://…` or an internal hostname unless every conn is rewritten
   perfectly.
-- **Spoofing.** If the app trusts a proxy-rewritten `Host`/`X-Forwarded-Host`,
-  an attacker sending `X-Forwarded-Host: evil.example` can make the metadata
-  endpoint advertise an attacker-controlled `resource` or — worse — an
-  attacker-controlled `authorization_servers`, steering the client to request
-  tokens from an attacker AS.
+- **Spoofing.** The request `Host` itself, or a proxy-rewritten
+  `X-Forwarded-Host`, can make an unpinned metadata endpoint advertise an
+  attacker-controlled `resource`.
 
-The metadata document is the one place a client learns where to authorize, so
-this is a redirect-to-attacker-AS vector. A FAPI-grade deployment should pin
-these values instead of trusting the request.
+When `resource_audience: :resource` is enabled, the resource identifier is also
+the token audience policy. AttestoMCP therefore requires a pinned origin for
+that policy and raises during plug initialization if it is absent or malformed.
 
 ## The recipe
 
@@ -41,8 +40,9 @@ authorization server distinct (they are usually different hosts under FAPI):
 
 `:base_url`/`:origin` accept a `String.t()`, a `(Plug.Conn.t() -> String.t())`
 callback, or a `{Mod, :fun}` / `{Mod, :fun, args}` tuple (the conn is prepended
-to `args`), resolved at request time. A blank or non-binary result is treated as
-"not configured" and falls back to the request origin.
+to `args`), resolved at request time. Once either option is present, a blank,
+malformed, or non-binary result raises. It never falls back to the request
+authority.
 
 The issuer (`authorization_servers`) is advertised **verbatim** — issuer
 identifiers are compared by exact string match, so a trailing slash is preserved
@@ -80,7 +80,7 @@ challenge URL matches the served `resource`:
 ```elixir
 plug AttestoMCP.Plug.ProtectResource,
   config: &MyApp.Attesto.config/0,
-  resource: "/mcp",
+  resource_path: "/mcp",
   scopes: [AttestoMCP.Scopes.tools_call()],
   base_url: "https://mcp.example.com"
 ```
@@ -102,10 +102,10 @@ def mcp_origin(_conn), do: MyApp.Config.canonical_url()
 base_url: &MyApp.Attesto.mcp_origin/1
 ```
 
-## What stays automatic
+## Discovery-only request derivation
 
-- Omit every knob and you get the previous behavior: both origins derived from
-  the request connection — correct for a simple single-host setup.
-- `authorization_servers` only changes from the resource origin when you supply
-  a `:config`/`:issuer` (or an explicit `:authorization_servers`), so existing
-  single-host deployments are unaffected.
+When no `:base_url` or `:origin` is configured, discovery-only resource metadata
+may still derive its `resource` from the connection. The authorization server
+always requires an explicit source. `resource_audience: :resource` cannot use
+request derivation and requires the same canonical pin on the plug and metadata
+route.

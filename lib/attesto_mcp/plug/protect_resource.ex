@@ -15,7 +15,7 @@ defmodule AttestoMCP.Plug.ProtectResource do
       plug AttestoMCP.Plug.ProtectResource,
         config: &MyApp.Attesto.config/0,
         replay_check: &MyApp.DPoPReplay.check_and_record/2,
-        resource: "/mcp",
+        resource_path: "/mcp",
         scopes: [AttestoMCP.Scopes.tools_call()]
 
   `init/1` returns no closures, so the plug works as a compile-time router
@@ -43,7 +43,7 @@ defmodule AttestoMCP.Plug.ProtectResource do
       protection =
         AttestoMCP.Plug.ProtectResource.prepare(
           config: &MyApp.Attesto.config/0,
-          resource: "/mcp"
+          resource_path: "/mcp"
         )
 
       conn = AttestoMCP.Plug.ProtectResource.authenticate(conn, protection)
@@ -81,25 +81,25 @@ defmodule AttestoMCP.Plug.ProtectResource do
       `max_age` the client must re-request at the authorization endpoint. A
       token from a machine grant (no `auth_time`) always challenges a freshness
       requirement, so step-up routes are for end-user grants.
-    * `:resource` (or `:resource_path`) - the MCP endpoint path, for example
+    * `:resource_path` - the MCP endpoint path, for example
       `"/mcp"` or `"/mcp/brokers"`. It drives the RFC 9728 `resource_metadata`
-      auth-param appended to `WWW-Authenticate` challenges, derived from the
-      live request origin via `AttestoMCP.Metadata.protected_resource_url/2`.
-      Both names mean the same thing; `:resource` reads naturally here while
-      `:resource_path` matches `AttestoMCP.Plug.Authenticate`.
+      auth-param appended to `WWW-Authenticate` challenges. The former
+      `:resource` path alias is deprecated because metadata uses `:resource`
+      for an absolute RFC 9728 resource identifier.
     * `:base_url` (or `:origin`) - pin the origin of the `resource_metadata`
       challenge URL behind a TLS-terminating proxy (a `String.t()` or
-      `(conn -> url)`), instead of trusting the proxy-rewritten request. When
-      omitted, the live request origin is used. This keeps the challenge URL
-      aligned with a pinned metadata `resource` and closes the
-      `X-Forwarded-Host` spoofing vector. See `guides/proxy_origin.md`.
+      `(conn -> url)`), instead of trusting the request authority. It is
+      required with `resource_audience: :resource`. Invalid literals fail at
+      initialization and invalid callback results fail at request time. See
+      `guides/proxy_origin.md`.
     * `:allow_http` - permit an HTTP `resource_metadata` URL for a deliberate
       development endpoint. HTTPS remains the default.
     * `:resource_audience` - confines access tokens to this protected resource;
       `:resource` derives its audience identifier from the resource path and
       resolved origin. A scalar token audience must match, and every member of
       an array-valued audience must match. This option is mutually exclusive
-      with Attesto core's `:trusted_audiences`; configuring both raises.
+      with Attesto core's `:trusted_audiences`; configuring both raises. The
+      `:resource` form requires a pinned `:base_url` or `:origin`.
 
   Every other option is passed through to `AttestoMCP.Plug.Authenticate`:
   `:config`, `:replay_check`, `:nonce_check`, `:nonce_issue`, `:cert_der`,
@@ -119,8 +119,11 @@ defmodule AttestoMCP.Plug.ProtectResource do
 
   alias Attesto.Plug.OAuthError
   alias Attesto.Scope
+  alias AttestoMCP.Auth
   alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Plug.RequireScopes
+
+  require Logger
 
   @boundary_private_key :attesto_mcp_protect_resource_boundary
 
@@ -128,7 +131,6 @@ defmodule AttestoMCP.Plug.ProtectResource do
   @opaque protection :: %{
             required(:authenticate) => keyword(),
             required(:boundary_id) => binary(),
-            required(:metadata_challenge) => keyword(),
             required(:require_scopes) => nil,
             required(:scope_opts) => keyword()
           }
@@ -147,16 +149,15 @@ defmodule AttestoMCP.Plug.ProtectResource do
     :scopes_key
   ]
 
-  # The escape-safe inputs RequireScopes needs to derive the same RFC 9728
-  # `resource_metadata` value Authenticate gives core. `:www_authenticate` is
-  # carried separately in the shared transport and remains a total override.
-  @metadata_keys [:resource_metadata_url, :resource_path, :base_url, :origin, :allow_http]
-
   @impl Plug
   def init(opts) when is_list(opts) do
-    opts
-    |> build_protection()
-    |> Map.put(:require_scopes, RequireScopes.init(require_scopes_opts(opts)))
+    protection = build_protection(opts)
+
+    Map.put(
+      protection,
+      :require_scopes,
+      RequireScopes.init(Keyword.merge(protection.scope_opts, Keyword.take(opts, @scope_keys)))
+    )
   end
 
   @impl Plug
@@ -165,13 +166,13 @@ defmodule AttestoMCP.Plug.ProtectResource do
           "a split ProtectResource boundary must call authenticate/2 and authorize/3 explicitly"
   end
 
-  def call(conn, %{require_scopes: require_scopes, metadata_challenge: metadata_challenge} = protection) do
+  def call(conn, %{require_scopes: require_scopes} = protection) do
     conn = authenticate(conn, protection)
 
     if conn.halted do
       conn
     else
-      RequireScopes.call(conn, put_metadata_challenge(require_scopes, metadata_challenge))
+      RequireScopes.call(conn, require_scopes)
     end
   end
 
@@ -189,13 +190,12 @@ defmodule AttestoMCP.Plug.ProtectResource do
   end
 
   defp build_protection(opts) do
+    authenticate = Authenticate.init(authenticate_opts(opts))
+
     %{
-      authenticate: Authenticate.init(authenticate_opts(opts)),
+      authenticate: authenticate,
       require_scopes: nil,
-      scope_opts: Keyword.take(opts, @shared_keys),
-      # Escape-safe inputs used to build the scope-rejection
-      # `:resource_metadata` core option at call time.
-      metadata_challenge: metadata_challenge_opts(opts)
+      scope_opts: Keyword.take(authenticate, @shared_keys)
     }
   end
 
@@ -234,7 +234,6 @@ defmodule AttestoMCP.Plug.ProtectResource do
           protection.scope_opts
           |> Keyword.put(:scopes, scopes)
           |> RequireScopes.init()
-          |> put_metadata_challenge(protection.metadata_challenge)
 
         RequireScopes.call(conn, require_scopes)
     end
@@ -256,39 +255,6 @@ defmodule AttestoMCP.Plug.ProtectResource do
     |> rename_resource()
   end
 
-  defp require_scopes_opts(opts) do
-    Keyword.take(opts, @scope_keys ++ @shared_keys)
-  end
-
-  defp metadata_challenge_opts(opts) do
-    opts
-    |> rename_resource()
-    |> Keyword.take(@metadata_keys)
-  end
-
-  # At call time, pass the generated `resource_metadata` resolver through
-  # OAuthError's native option. A host `:www_authenticate` remains a total
-  # override and suppresses generated metadata evaluation.
-  defp put_metadata_challenge(require_scopes, metadata_challenge) do
-    Map.update(
-      require_scopes,
-      :transport,
-      metadata_transport([], metadata_challenge),
-      &metadata_transport(&1, metadata_challenge)
-    )
-  end
-
-  defp metadata_transport(transport, metadata_challenge) do
-    if Keyword.has_key?(transport, :www_authenticate) do
-      Keyword.delete(transport, :resource_metadata)
-    else
-      metadata_challenge
-      |> Keyword.merge(transport)
-      |> Authenticate.oauth_error_metadata_opts()
-      |> Enum.reduce(transport, fn {key, value}, acc -> Keyword.put(acc, key, value) end)
-    end
-  end
-
   defp mark_boundary_authenticated(conn, %{boundary_id: boundary_id}) when is_binary(boundary_id),
     do: Plug.Conn.put_private(conn, @boundary_private_key, boundary_id)
 
@@ -304,29 +270,44 @@ defmodule AttestoMCP.Plug.ProtectResource do
 
     transport =
       protection.scope_opts
-      |> Keyword.take([:send_error, :www_authenticate, :no_store, :resource_metadata, :allow_http])
-      |> metadata_transport(protection.metadata_challenge)
+      |> Authenticate.oauth_error_opts()
 
     OAuthError.unauthorized(
       conn,
-      scheme_of(conn.assigns[claims_key]),
+      Auth.scheme(conn.assigns[claims_key]),
       "invalid_token",
       Keyword.put(transport, :description, "request was not authenticated by this protected-resource boundary")
     )
   end
 
-  defp scheme_of(%{"cnf" => %{"jkt" => jkt}}) when is_binary(jkt), do: :dpop
-  defp scheme_of(_claims), do: :bearer
-
   defp rename_resource(opts) do
-    case Keyword.fetch(opts, :resource) do
-      {:ok, resource} ->
+    case {Keyword.fetch(opts, :resource), Keyword.fetch(opts, :resource_path)} do
+      {{:ok, _resource}, {:ok, _resource_path}} ->
+        raise ArgumentError,
+              "use :resource_path for an endpoint path; do not configure both :resource and :resource_path"
+
+      {{:ok, resource}, :error} ->
+        warn_deprecated_resource_alias_once()
+
         opts
         |> Keyword.delete(:resource)
-        |> Keyword.put_new(:resource_path, resource)
+        |> Keyword.put(:resource_path, resource)
 
-      :error ->
+      {:error, _resource_path} ->
         opts
+    end
+  end
+
+  defp warn_deprecated_resource_alias_once do
+    key = {__MODULE__, :resource_alias_warning_emitted}
+
+    if !:persistent_term.get(key, false) do
+      :persistent_term.put(key, true)
+
+      Logger.warning(
+        "AttestoMCP.Plug.ProtectResource :resource is deprecated because Metadata uses it for an absolute URI; " <>
+          "use :resource_path for the endpoint path"
+      )
     end
   end
 end

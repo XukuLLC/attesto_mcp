@@ -25,11 +25,11 @@ defmodule AttestoMCP.DependencyRequirementsTest do
     refute_matches(requirement!(:jose), ~w(1.11.11 2.0.0))
   end
 
-  test "Attesto uses the shared-metadata floor and Postgrex uses its patched floor" do
+  test "Attesto uses the hardened-core floor and Postgrex uses its patched floor" do
     case dependency!(:attesto) do
       {:attesto, requirement} when is_binary(requirement) ->
-        assert_matches(requirement, ~w(2.5.0 2.99.0))
-        refute_matches(requirement, ~w(1.12.2 1.99.0 2.4.0 3.0.0))
+        assert_matches(requirement, ~w(2.6.0 2.99.0))
+        refute_matches(requirement, ~w(1.12.2 1.99.0 2.4.0 2.5.0 3.0.0))
 
       {:attesto, opts} when is_list(opts) ->
         assert opts[:path], "expected the explicit ATTESTO_PATH development dependency"

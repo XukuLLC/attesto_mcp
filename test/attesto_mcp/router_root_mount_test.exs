@@ -17,7 +17,9 @@ defmodule AttestoMCP.RouterRootMountTest do
     use AttestoMCP.Router
 
     scope "/" do
-      attesto_mcp_protected_resource_metadata "/mcp", scopes: [Scopes.tools_call()]
+      attesto_mcp_protected_resource_metadata "/mcp",
+        scopes: [Scopes.tools_call()],
+        issuer: "https://auth.example.com"
     end
   end
 
@@ -27,7 +29,9 @@ defmodule AttestoMCP.RouterRootMountTest do
     use AttestoMCP.Router
 
     scope "/" do
-      attesto_mcp_protected_resource_metadata "/", scopes: [Scopes.tools_call()]
+      attesto_mcp_protected_resource_metadata "/",
+        scopes: [Scopes.tools_call()],
+        issuer: "https://auth.example.com"
     end
   end
 
@@ -37,8 +41,15 @@ defmodule AttestoMCP.RouterRootMountTest do
     use AttestoMCP.Router
 
     scope "/" do
-      attesto_mcp_protected_resource_metadata "/mcp/a", scopes: [Scopes.tools_call()], root: false
-      attesto_mcp_protected_resource_metadata "/mcp/b", scopes: [Scopes.tools_call()], root: false
+      attesto_mcp_protected_resource_metadata "/mcp/a",
+        scopes: [Scopes.tools_call()],
+        issuer: "https://auth.example.com",
+        root: false
+
+      attesto_mcp_protected_resource_metadata "/mcp/b",
+        scopes: [Scopes.tools_call()],
+        issuer: "https://auth.example.com",
+        root: false
     end
   end
 
@@ -50,10 +61,12 @@ defmodule AttestoMCP.RouterRootMountTest do
     scope "/" do
       attesto_mcp_protected_resource_metadata "/mcp/first",
         scopes: ["first:mcp:tools:call"],
+        issuer: "https://auth.example.com",
         root: false
 
       attesto_mcp_protected_resource_metadata "/mcp/second",
         scopes: ["second:mcp:tools:call"],
+        issuer: "https://auth.example.com",
         root: true
     end
   end
@@ -79,7 +92,10 @@ defmodule AttestoMCP.RouterRootMountTest do
           use AttestoMCP.Router
 
           scope "/" do
-            attesto_mcp_protected_resource_metadata "/", scopes: ["mcp:use"], root: false
+            attesto_mcp_protected_resource_metadata "/",
+              scopes: ["mcp:use"],
+              issuer: "https://auth.example.com",
+              root: false
           end
         end
       end
@@ -115,8 +131,13 @@ defmodule AttestoMCP.RouterRootMountTest do
           use AttestoMCP.Router
 
           scope "/" do
-            attesto_mcp_protected_resource_metadata "/mcp/a", scopes: ["a:mcp:tools:call"]
-            attesto_mcp_protected_resource_metadata "/mcp/b", scopes: ["b:mcp:tools:call"]
+            attesto_mcp_protected_resource_metadata "/mcp/a",
+              scopes: ["a:mcp:tools:call"],
+              issuer: "https://auth.example.com"
+
+            attesto_mcp_protected_resource_metadata "/mcp/b",
+              scopes: ["b:mcp:tools:call"],
+              issuer: "https://auth.example.com"
           end
         end
       end
@@ -129,10 +150,13 @@ defmodule AttestoMCP.RouterRootMountTest do
           use AttestoMCP.Router
 
           scope "/" do
-            attesto_mcp_protected_resource_metadata "/mcp/a", scopes: ["a:mcp:tools:call"]
+            attesto_mcp_protected_resource_metadata "/mcp/a",
+              scopes: ["a:mcp:tools:call"],
+              issuer: "https://auth.example.com"
 
             attesto_mcp_protected_resource_metadata "/mcp/b",
               scopes: ["b:mcp:tools:call"],
+              issuer: "https://auth.example.com",
               root: false
           end
         end
@@ -146,8 +170,15 @@ defmodule AttestoMCP.RouterRootMountTest do
           use AttestoMCP.Router
 
           scope "/" do
-            attesto_mcp_protected_resource_metadata "/mcp/a", scopes: ["a:mcp:tools:call"], root: true
-            attesto_mcp_protected_resource_metadata "/mcp/b", scopes: ["b:mcp:tools:call"], root: true
+            attesto_mcp_protected_resource_metadata "/mcp/a",
+              scopes: ["a:mcp:tools:call"],
+              issuer: "https://auth.example.com",
+              root: true
+
+            attesto_mcp_protected_resource_metadata "/mcp/b",
+              scopes: ["b:mcp:tools:call"],
+              issuer: "https://auth.example.com",
+              root: true
           end
         end
       end

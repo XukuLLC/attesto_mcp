@@ -3,13 +3,9 @@ defmodule AttestoMCP.Anubis.JSONSafeTest do
   use ExUnit.Case, async: true
 
   alias AttestoMCP.Anubis.JSONSafe
+  alias AttestoMCP.Test.BareStruct
   alias AttestoMCP.Test.InvalidNestedJasonStruct
   alias AttestoMCP.Test.ValidJasonStruct
-
-  defmodule BareStruct do
-    @moduledoc false
-    defstruct [:x]
-  end
 
   # The result must always be encodable — that is the whole point.
   defp assert_encodable(value) do

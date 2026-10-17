@@ -1,8 +1,3 @@
-defmodule AttestoMCP.Anubis.SessionStore.EctoTest.BareStruct do
-  @moduledoc false
-  defstruct [:x]
-end
-
 defmodule AttestoMCP.Anubis.SessionStore.EctoTest.FailingRepo do
   @moduledoc false
 
@@ -20,8 +15,8 @@ defmodule AttestoMCP.Anubis.SessionStore.EctoTest do
   use ExUnit.Case, async: false
 
   alias AttestoMCP.Anubis.SessionStore.Ecto, as: Store
-  alias AttestoMCP.Anubis.SessionStore.EctoTest.BareStruct
   alias AttestoMCP.Anubis.SessionStore.EctoTest.FailingRepo
+  alias AttestoMCP.Test.BareStruct
   alias AttestoMCP.Test.ValidJasonStruct
   alias AttestoMCP.TestRepo
   alias Ecto.Adapters.SQL.Sandbox

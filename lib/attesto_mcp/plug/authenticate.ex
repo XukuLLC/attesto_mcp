@@ -44,6 +44,8 @@ defmodule AttestoMCP.Plug.Authenticate do
       exclusive; configuring both raises rather than silently weakening either
       policy. A callback must return a valid identifier; `nil` or another
       malformed result fails authentication and never disables confinement.
+      The `:resource` form requires a valid pinned `:base_url` or `:origin` at
+      initialization so the request `Host` cannot choose the audience.
     * `:principal` - optional callback that receives verified claims and sender
       context, returning `{:ok, principal}` or `{:error, reason}`.
     * `:resource_metadata_url` - URL string, `(conn -> url)` callback, or
@@ -55,7 +57,9 @@ defmodule AttestoMCP.Plug.Authenticate do
       via `:base_url`/`:origin` (which the default derivation honors) rather than
       a conn-deriving `:resource_metadata_url` callback behind a proxy. A custom
       `:www_authenticate` callback replaces challenge handling entirely, so it
-      must append its own `resource_metadata` if wanted.
+      must append its own `resource_metadata` if wanted. Literal URLs are
+      validated at initialization. Invalid callback results are omitted and
+      logged once without including the invalid value.
     * `:resource_path` - MCP endpoint path used to derive
       `:resource_metadata_url`. Its origin is resolved by
       `AttestoMCP.Metadata.resolve_origin/2`, so a pinned origin applies.
@@ -65,7 +69,8 @@ defmodule AttestoMCP.Plug.Authenticate do
       TLS-terminating proxy so the advertised metadata URL cannot be spoofed
       via `X-Forwarded-*`. When omitted, the live request origin is used. This
       origin is the resource server's own; it is independent of the `:config`
-      issuer (the authorization server).
+      issuer (the authorization server). The option is mandatory when
+      `resource_audience: :resource` is enabled.
     * `:allow_http` - permit an HTTP `resource_metadata` URL for a deliberate
       development endpoint. HTTPS remains the default.
   """
@@ -77,17 +82,34 @@ defmodule AttestoMCP.Plug.Authenticate do
   alias Attesto.Plug.Authenticate, as: AttestoAuthenticate
   alias Attesto.Plug.OAuthError
   alias Attesto.URI, as: AttestoURI
+  alias AttestoMCP.Auth
   alias AttestoMCP.Metadata
+
+  require Logger
 
   @claims_key :attesto_mcp_claims
   @scopes_key :attesto_mcp_scopes
   @sender_key :attesto_mcp_sender
   @principal_key :attesto_mcp_principal
   @context_key :attesto_context
+  @mcp_option_keys [
+    :base_url,
+    :context_key,
+    :origin,
+    :principal,
+    :principal_key,
+    :resource_audience,
+    :resource_path,
+    :scopes_key,
+    :sender_key
+  ]
 
   @impl Plug
   def init(opts) when is_list(opts) do
+    Metadata.validate_origin_options!(opts)
+    validate_resource_path!(opts)
     validate_audience_policy!(opts)
+    validate_resource_metadata_url!(opts)
 
     normalized_core_opts =
       opts
@@ -96,7 +118,7 @@ defmodule AttestoMCP.Plug.Authenticate do
 
     # Retain MCP-only configuration while preserving every validation and
     # normalization performed by the core plug at pipeline initialization.
-    Keyword.merge(opts, normalized_core_opts)
+    Keyword.merge(normalized_core_opts, Keyword.take(opts, @mcp_option_keys))
   end
 
   @impl Plug
@@ -105,10 +127,7 @@ defmodule AttestoMCP.Plug.Authenticate do
 
     conn =
       conn
-      |> AttestoAuthenticate.call(
-        core_opts(opts, claims_key)
-        |> put_resource_audience(conn, opts)
-      )
+      |> AttestoAuthenticate.call(put_resource_audience(opts, conn, opts))
 
     if conn.halted do
       conn
@@ -126,8 +145,6 @@ defmodule AttestoMCP.Plug.Authenticate do
   # request because it honors the live / pinned origin; absent, the host config
   # audience (or an explicitly supplied core policy) is used unchanged.
   defp put_resource_audience(core, conn, opts) do
-    validate_audience_policy!(opts)
-
     case Keyword.get(opts, :resource_audience) do
       nil -> core
       false -> core
@@ -146,6 +163,10 @@ defmodule AttestoMCP.Plug.Authenticate do
     if resource_audience == :resource and not is_binary(Keyword.get(opts, :resource_path)) do
       raise ArgumentError,
             "resource_audience: :resource requires a :resource / :resource_path option to derive the audience"
+    end
+
+    if resource_audience == :resource do
+      Metadata.require_pinned_origin!(opts)
     end
 
     if !valid_resource_audience_policy?(resource_audience) do
@@ -167,41 +188,35 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   defp valid_resource_audience_policy?(_value), do: false
 
+  defp validate_resource_path!(opts) do
+    case Keyword.fetch(opts, :resource_path) do
+      {:ok, resource_path} ->
+        _ = Metadata.normalize_resource_path!(resource_path)
+        :ok
+
+      :error ->
+        :ok
+    end
+  end
+
   # `:resource` derives the identifier from the configured `:resource_path` and
   # resolved origin. Other supported values are literal identifiers or
   # `(conn -> identifier)` callbacks in function / MFA form. A callback result
   # is deliberately not treated as an enable/disable signal: malformed values
   # become a malformed one-item core trust list and fail token verification.
-  defp resolve_resource_audience(:resource, conn, opts), do: resource_audience_from_path(conn, opts)
+  defp resolve_resource_audience(:resource, conn, opts) do
+    Metadata.resource_identifier(conn, Keyword.fetch!(opts, :resource_path), opts)
+  end
+
   defp resolve_resource_audience(value, conn, _opts), do: invoke_resource_audience(value, conn)
 
   defp invoke_resource_audience(value, _conn) when is_binary(value), do: value
-  defp invoke_resource_audience(fun, conn) when is_function(fun, 1), do: fun.(conn)
-
-  defp invoke_resource_audience({m, f}, conn) when is_atom(m) and is_atom(f), do: apply(m, f, [conn])
-
-  defp invoke_resource_audience({m, f, a}, conn) when is_atom(m) and is_atom(f) and is_list(a),
-    do: apply(m, f, [conn | a])
-
-  defp resource_audience_from_path(conn, opts) do
-    case Keyword.get(opts, :resource_path) do
-      path when is_binary(path) ->
-        Metadata.resource_identifier(conn, path, opts)
-
-      _ ->
-        # Fail closed: the host asked to confine the token to THIS resource's
-        # audience but supplied no resource path to derive it from. Silently
-        # falling back to the global `config.audience` would disable the
-        # confinement the host explicitly requested.
-        raise ArgumentError,
-              "resource_audience: :resource requires a :resource / :resource_path option to derive the audience"
-    end
-  end
+  defp invoke_resource_audience(callback, conn), do: Auth.invoke(callback, [conn])
 
   defp assign_context(conn, opts, claims_key) do
     claims = conn.assigns[claims_key]
     sender = sender_context(claims)
-    scopes = scopes(claims)
+    scopes = Auth.scopes(claims)
 
     # Resolve the optional principal before assigning the verified context.
     case resolve_principal(opts, claims, sender) do
@@ -213,7 +228,7 @@ defmodule AttestoMCP.Plug.Authenticate do
         |> assign(Keyword.get(opts, :context_key, @context_key), context(claims, scopes, principal))
 
       :error ->
-        OAuthError.unauthorized(conn, scheme_of(claims), "invalid_token", error_opts(opts, []))
+        OAuthError.unauthorized(conn, Auth.scheme(claims), "invalid_token", error_opts(opts, []))
     end
   end
 
@@ -223,7 +238,7 @@ defmodule AttestoMCP.Plug.Authenticate do
         {:ok, nil}
 
       callback ->
-        case invoke(callback, [claims, sender]) do
+        case Auth.invoke(callback, [claims, sender]) do
           {:ok, principal} -> {:ok, principal}
           _rejected -> :error
         end
@@ -245,8 +260,24 @@ defmodule AttestoMCP.Plug.Authenticate do
   end
 
   @doc false
-  # Compatibility helper retained for callers that used the pre-2.5
-  # integration. Internal paths pass `:resource_metadata` to core instead.
+  @spec oauth_error_opts(keyword()) :: keyword()
+  def oauth_error_opts(opts),
+    do: Keyword.take(opts, [:send_error, :www_authenticate, :no_store, :resource_metadata, :allow_http])
+
+  @doc false
+  @spec oauth_error_metadata_opts(keyword()) :: keyword()
+  def oauth_error_metadata_opts(opts) do
+    if Keyword.has_key?(opts, :www_authenticate) do
+      []
+    else
+      []
+      |> maybe_put_opt(:resource_metadata, metadata_url_resolver(opts))
+      |> maybe_copy_opt(opts, :allow_http)
+    end
+  end
+
+  @doc false
+  @deprecated "Pass :resource_metadata to Attesto.Plug.OAuthError"
   @spec metadata_www_authenticate(keyword()) :: (Plug.Conn.t(), String.t() -> Plug.Conn.t()) | nil
   def metadata_www_authenticate(opts) do
     cond do
@@ -265,35 +296,58 @@ defmodule AttestoMCP.Plug.Authenticate do
   end
 
   defp render_metadata_challenge(challenge, url, opts) do
-    if AttestoURI.https_identifier?(url, allow_http: Keyword.get(opts, :allow_http, false)),
-      do: Metadata.append_resource_metadata(challenge, url),
-      else: challenge
-  end
-
-  @doc false
-  # Shared by core Authenticate and the MCP scope-rejection renderer. A host
-  # `:www_authenticate` callback remains a total override, so generated metadata
-  # is neither evaluated nor included in that case.
-  @spec oauth_error_metadata_opts(keyword()) :: keyword()
-  def oauth_error_metadata_opts(opts) do
-    if Keyword.has_key?(opts, :www_authenticate) do
-      []
+    if AttestoURI.https_identifier?(url, allow_http: Keyword.get(opts, :allow_http, false)) do
+      append_resource_metadata = Function.capture(Metadata, :append_resource_metadata, 2)
+      append_resource_metadata.(challenge, url)
     else
-      []
-      |> maybe_put_opt(:resource_metadata, metadata_url_resolver(opts))
-      |> maybe_copy_opt(opts, :allow_http)
+      challenge
     end
   end
 
   @doc false
-  # Core invokes this MFA when a host callback has a derived-path fallback.
-  # Blank/non-string results retain the historical fallback; nonempty URLs go
-  # back to core, which applies the shared URI policy.
+  # Compatibility arity: this intentionally preserves the 2.0 callback/fallback
+  # behavior and does not validate the returned URL. New internal integrations
+  # use resolve_resource_metadata_url/4, which validates the selected URL.
   @spec resolve_resource_metadata_url(Plug.Conn.t(), term(), term()) :: term()
   def resolve_resource_metadata_url(conn, callback, fallback) do
     case resolve_metadata_url(callback, conn) do
       url when is_binary(url) and url != "" -> url
       _invalid -> resolve_metadata_url(fallback, conn)
+    end
+  end
+
+  @doc false
+  # Core invokes this MFA when a host callback has a derived-path fallback.
+  # Invalid callback results are omitted, with a VM-wide warning emitted
+  # once, instead of disappearing silently inside core's challenge renderer.
+  @spec resolve_resource_metadata_url(Plug.Conn.t(), term(), term(), boolean()) :: term()
+  def resolve_resource_metadata_url(conn, callback, fallback, allow_http?) do
+    callback
+    |> resolve_metadata_url(conn)
+    |> valid_resource_metadata_url(allow_http?)
+    |> case do
+      {:ok, url} ->
+        url
+
+      :error ->
+        warn_invalid_resource_metadata_once()
+        resolve_validated_resource_metadata_url(conn, fallback, allow_http?)
+    end
+  end
+
+  @doc false
+  @spec resolve_validated_resource_metadata_url(Plug.Conn.t(), term(), boolean()) :: term()
+  def resolve_validated_resource_metadata_url(conn, resolver, allow_http?) do
+    resolver
+    |> resolve_metadata_url(conn)
+    |> valid_resource_metadata_url(allow_http?)
+    |> case do
+      {:ok, url} ->
+        url
+
+      :error ->
+        warn_invalid_resource_metadata_once()
+        nil
     end
   end
 
@@ -321,9 +375,9 @@ defmodule AttestoMCP.Plug.Authenticate do
     if Keyword.has_key?(opts, :www_authenticate) do
       Keyword.delete(core_opts, :resource_metadata)
     else
-      Enum.reduce(oauth_error_metadata_opts(opts), core_opts, fn {key, value}, acc ->
-        Keyword.put(acc, key, value)
-      end)
+      core_opts
+      |> maybe_put_opt(:resource_metadata, metadata_url_resolver(opts))
+      |> maybe_copy_opt(opts, :allow_http)
     end
   end
 
@@ -333,27 +387,21 @@ defmodule AttestoMCP.Plug.Authenticate do
     |> metadata_url_resolver(opts)
   end
 
-  defp metadata_url_resolver(url, _opts) when is_binary(url) and url != "", do: url
+  defp metadata_url_resolver(url, _opts) when is_binary(url), do: url
 
-  defp metadata_url_resolver("", opts), do: metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
+  defp metadata_url_resolver(callback, opts)
+       when is_function(callback, 1) or (is_tuple(callback) and tuple_size(callback) in [2, 3]),
+       do: metadata_callback(callback, opts)
 
-  defp metadata_url_resolver(fun, opts) when is_function(fun, 1), do: metadata_callback(fun, opts)
-
-  defp metadata_url_resolver({module, fun}, opts) when is_atom(module) and is_atom(fun),
-    do: metadata_callback({module, fun}, opts)
-
-  defp metadata_url_resolver({module, fun, args}, opts) when is_atom(module) and is_atom(fun) and is_list(args),
-    do: metadata_callback({module, fun, args}, opts)
-
-  defp metadata_url_resolver(_invalid, opts),
-    do: metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
+  defp metadata_url_resolver(nil, opts), do: validated_metadata_fallback(opts)
+  defp metadata_url_resolver(_invalid, _opts), do: nil
 
   # The challenge URL must agree with the served metadata `resource`, so resolve
   # its origin the same way `AttestoMCP.Metadata` does: a pinned `:base_url` /
   # `:origin` wins over the request connection. (The issuer is not used here -
   # it is the authorization server, not the resource origin.)
   defp metadata_url_from_resource_path(path, opts) when is_binary(path) do
-    origin_opts = Keyword.take(opts, [:base_url, :origin])
+    origin_opts = Keyword.take(opts, [:base_url, :origin, :allow_http])
     {Metadata, :protected_resource_url, [path, origin_opts]}
   end
 
@@ -361,24 +409,74 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   defp metadata_callback(callback, opts) do
     fallback = metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
+    allow_http? = Keyword.get(opts, :allow_http, false)
 
     if fallback,
-      do: {__MODULE__, :resolve_resource_metadata_url, [callback, fallback]},
-      else: callback
+      do: {__MODULE__, :resolve_resource_metadata_url, [callback, fallback, allow_http?]},
+      else: {__MODULE__, :resolve_validated_resource_metadata_url, [callback, allow_http?]}
+  end
+
+  defp validated_metadata_fallback(opts) do
+    case metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts) do
+      nil ->
+        nil
+
+      fallback ->
+        {__MODULE__, :resolve_validated_resource_metadata_url, [fallback, Keyword.get(opts, :allow_http, false)]}
+    end
+  end
+
+  defp validate_resource_metadata_url!(opts) do
+    case Keyword.fetch(opts, :resource_metadata_url) do
+      :error ->
+        :ok
+
+      {:ok, spec} ->
+        validate_resource_metadata_url_spec!(spec, opts)
+    end
+  end
+
+  defp validate_resource_metadata_url_spec!(url, opts) when is_binary(url) do
+    case valid_resource_metadata_url(url, Keyword.get(opts, :allow_http, false)) do
+      {:ok, _url} -> :ok
+      :error -> raise_invalid_resource_metadata_url!()
+    end
+  end
+
+  defp validate_resource_metadata_url_spec!(fun, _opts) when is_function(fun, 1), do: :ok
+
+  defp validate_resource_metadata_url_spec!({module, fun}, _opts) when is_atom(module) and is_atom(fun), do: :ok
+
+  defp validate_resource_metadata_url_spec!({module, fun, args}, _opts)
+       when is_atom(module) and is_atom(fun) and is_list(args), do: :ok
+
+  defp validate_resource_metadata_url_spec!(_invalid, _opts), do: raise_invalid_resource_metadata_url!()
+
+  defp valid_resource_metadata_url(url, allow_http?) do
+    if AttestoURI.https_identifier?(url, allow_http: allow_http?), do: {:ok, url}, else: :error
+  end
+
+  defp raise_invalid_resource_metadata_url! do
+    raise ArgumentError,
+          ":resource_metadata_url must be an absolute HTTPS URL without userinfo or fragment; " <>
+            "set allow_http: true only for a deliberate development endpoint"
+  end
+
+  defp warn_invalid_resource_metadata_once do
+    key = {__MODULE__, :invalid_resource_metadata_warning_emitted}
+
+    if !:persistent_term.get(key, false) do
+      :persistent_term.put(key, true)
+
+      Logger.warning(
+        "AttestoMCP omitted an invalid resource_metadata callback result; " <>
+          "return an absolute HTTPS URL or set allow_http: true for development"
+      )
+    end
   end
 
   defp resolve_metadata_url(url, _conn) when is_binary(url), do: url
-  defp resolve_metadata_url(fun, conn) when is_function(fun, 1), do: fun.(conn)
-
-  defp resolve_metadata_url({module, fun}, conn) when is_atom(module) and is_atom(fun), do: apply(module, fun, [conn])
-
-  defp resolve_metadata_url({module, fun, args}, conn) when is_atom(module) and is_atom(fun) and is_list(args),
-    do: apply(module, fun, [conn | args])
-
-  defp resolve_metadata_url(_invalid, _conn), do: nil
-
-  defp scopes(%{"scope" => scope}) when is_binary(scope), do: String.split(scope, ~r/\s+/, trim: true)
-  defp scopes(_claims), do: []
+  defp resolve_metadata_url(callback, conn), do: Auth.invoke(callback, [conn])
 
   defp sender_context(%{"cnf" => %{"jkt" => jkt}}) when is_binary(jkt) do
     %{binding: :dpop, jkt: jkt}
@@ -390,13 +488,9 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   defp sender_context(_claims), do: %{binding: :bearer}
 
-  defp scheme_of(%{"cnf" => %{"jkt" => jkt}}) when is_binary(jkt), do: :dpop
-  defp scheme_of(_claims), do: :bearer
-
   defp error_opts(opts, extra) do
     opts
-    |> Keyword.take([:send_error, :www_authenticate, :no_store, :resource_metadata, :allow_http])
-    |> put_oauth_error_metadata(opts)
+    |> oauth_error_opts()
     |> Keyword.merge(extra)
   end
 
@@ -409,11 +503,4 @@ defmodule AttestoMCP.Plug.Authenticate do
       :error -> target
     end
   end
-
-  defp invoke(fun, args) when is_function(fun), do: apply(fun, args)
-
-  defp invoke({module, fun}, args) when is_atom(module) and is_atom(fun), do: apply(module, fun, args)
-
-  defp invoke({module, fun, extra}, args) when is_atom(module) and is_atom(fun) and is_list(extra),
-    do: apply(module, fun, args ++ extra)
 end

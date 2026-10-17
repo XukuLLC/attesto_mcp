@@ -12,7 +12,7 @@ the endpoint needs. Every step is copy-pasteable.
 
 The pieces fit together so that the RFC 9728 `resource` identifier a client
 discovers and the `resource_metadata` challenge the server returns on a 401
-always agree, because both derive from the same request origin and resource
+always agree, because both derive from the same configured origin and resource
 path.
 
 ## 1. Attesto config
@@ -38,6 +38,7 @@ that fails every request:
 ```bash
 mix attesto_mcp.install \
   --config-module MyApp.Attesto \
+  --base-url https://mcp.example.com \
   --resource-path /mcp \
   --scopes mcp:tools:call
 ```
@@ -77,6 +78,7 @@ defmodule MyAppWeb.Router do
 
     attesto_mcp_protected_resource_metadata "/mcp",
       scopes: [AttestoMCP.Scopes.tools_call()],
+      config: {MyApp.Attesto, :config},
       base_url: "https://mcp.example.com"
   end
 
@@ -94,10 +96,14 @@ its root choice explicit. Either serve no root document:
 ```elixir
 attesto_mcp_protected_resource_metadata "/mcp/foo",
   scopes: ["foo:mcp:tools:call"],
+  config: {MyApp.Attesto, :config},
+  base_url: "https://mcp.example.com",
   root: false
 
 attesto_mcp_protected_resource_metadata "/mcp/bar",
   scopes: ["bar:mcp:tools:call"],
+  config: {MyApp.Attesto, :config},
+  base_url: "https://mcp.example.com",
   root: false
 ```
 
@@ -106,10 +112,14 @@ Or explicitly nominate exactly one resource for legacy root discovery:
 ```elixir
 attesto_mcp_protected_resource_metadata "/mcp/foo",
   scopes: ["foo:mcp:tools:call"],
+  config: {MyApp.Attesto, :config},
+  base_url: "https://mcp.example.com",
   root: false
 
 attesto_mcp_protected_resource_metadata "/mcp/bar",
   scopes: ["bar:mcp:tools:call"],
+  config: {MyApp.Attesto, :config},
+  base_url: "https://mcp.example.com",
   root: true
 ```
 
@@ -120,9 +130,9 @@ client requires the unsuffixed document.
 ## 4. Protect the endpoint with one plug
 
 `AttestoMCP.Plug.ProtectResource` composes authentication and scope enforcement
-into one correctly ordered, halt-respecting plug. The `:resource` it is given is
-the same path mounted for discovery above, so the `resource_metadata` challenge
-on a 401 points at the route from step 3.
+into one correctly ordered, halt-respecting plug. The `:resource_path` it is
+given is the same path mounted for discovery above, so the
+`resource_metadata` challenge on a 401 points at the route from step 3.
 
 ```elixir
 pipeline :mcp do
@@ -131,7 +141,7 @@ pipeline :mcp do
   plug AttestoMCP.Plug.ProtectResource,
     config: &MyApp.Attesto.config/0,
     replay_check: &MyApp.DPoPReplay.check_and_record/2,
-    resource: "/mcp",
+    resource_path: "/mcp",
     base_url: "https://mcp.example.com",
     resource_audience: :resource,
     scopes: [AttestoMCP.Scopes.tools_call()],
@@ -153,8 +163,8 @@ the token audience check, so a sibling resource cannot accept the token merely
 because it requires the same scope. A scalar `aud` must equal the identifier,
 and every member of an array-valued `aud` must equal it. Do not combine this
 route-derived policy with Attesto core's `trusted_audiences`; configure one or
-the other. When `:base_url`/`:origin` is omitted, both sides derive the origin
-from the request; pin the same value on both behind a reverse proxy.
+the other. The route-derived audience requires `:base_url`/`:origin`; pin the
+same value on both sides.
 
 ## Combined authorization server and multiple MCP resources
 
@@ -177,11 +187,13 @@ scope "/" do
 
   attesto_mcp_protected_resource_metadata "/mcp/alpha",
     scopes: ["alpha:tools"],
+    config: {MyApp.Attesto, :resource_config},
     base_url: "https://mcp.example.com",
     root: false
 
   attesto_mcp_protected_resource_metadata "/mcp/beta",
     scopes: ["beta:tools"],
+    config: {MyApp.Attesto, :resource_config},
     base_url: "https://mcp.example.com",
     root: false
 end
@@ -195,7 +207,7 @@ pipeline :mcp_alpha do
 
   plug AttestoMCP.Plug.ProtectResource,
     config: &MyApp.Attesto.resource_config/0,
-    resource: "/mcp/alpha",
+    resource_path: "/mcp/alpha",
     scopes: ["alpha:tools"],
     base_url: "https://mcp.example.com",
     resource_audience: :resource
@@ -206,7 +218,7 @@ pipeline :mcp_beta do
 
   plug AttestoMCP.Plug.ProtectResource,
     config: &MyApp.Attesto.resource_config/0,
-    resource: "/mcp/beta",
+    resource_path: "/mcp/beta",
     scopes: ["beta:tools"],
     base_url: "https://mcp.example.com",
     resource_audience: :resource
@@ -248,7 +260,7 @@ authenticated, or `nil` when none was presented.
 ```elixir
 plug AttestoMCP.Plug.ProtectResource,
   config: &MyApp.Attesto.config/0,
-  resource: "/mcp",
+  resource_path: "/mcp",
   scopes: [AttestoMCP.Scopes.tools_call()],
   cert_der: fn conn -> MyApp.TLS.client_certificate_der(conn) end
 ```

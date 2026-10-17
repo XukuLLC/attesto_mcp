@@ -7,9 +7,9 @@ if Code.ensure_loaded?(Phoenix.Controller) do
     dispatch here. The controller reads the resource path and metadata options
     placed in `conn.private` by the route, builds the document with
     `AttestoMCP.Metadata.protected_resource/3`, and renders it as JSON. The
-    `resource` identifier and default `authorization_servers` origin come from
-    `AttestoMCP.Metadata.resolve_origin/2`: a `:base_url`/`:origin`/`:issuer`
-    passed to the router macro pins it; otherwise it is the live request origin.
+    `resource` identifier comes from `AttestoMCP.Metadata.resolve_origin/2`.
+    The authorization server must be supplied by `:authorization_servers`,
+    `:issuer`, or `:config`; it is never derived from the request authority.
 
     Because the `resource` identifier is resolved the same way
     `AttestoMCP.Plug.ProtectResource` resolves its `WWW-Authenticate`
@@ -36,7 +36,9 @@ if Code.ensure_loaded?(Phoenix.Controller) do
 
       metadata = Metadata.protected_resource(conn, resource_path, metadata_opts(opts))
 
-      json(conn, metadata)
+      conn
+      |> Plug.Conn.put_resp_header("cache-control", "no-store")
+      |> json(metadata)
     end
 
     # `:scopes` is the ergonomic name on the router macro; the RFC 9728 field is

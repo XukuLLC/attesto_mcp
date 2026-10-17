@@ -5,6 +5,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
   import Plug.Conn
   import Plug.Test
 
+  alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Plug.ProtectResource
   alias AttestoMCP.Scopes
   alias AttestoMCP.Test.DPoPReplay
@@ -44,7 +45,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
         |> put_req_header("authorization", "Bearer " <> token)
         |> protect(config,
           scopes: [Scopes.tools_call()],
-          resource: "/mcp/reports",
+          resource_path: "/mcp/reports",
           base_url: "https://mcp.example.com",
           resource_audience: :resource
         )
@@ -65,7 +66,27 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
         |> put_req_header("authorization", "Bearer " <> token)
         |> protect(config,
           scopes: [Scopes.tools_call()],
-          resource: "/mcp",
+          resource_path: "/mcp",
+          base_url: "https://mcp.example.com",
+          resource_audience: :resource
+        )
+
+      assert conn.halted
+      assert conn.status == 401
+      assert JSON.decode!(conn.resp_body)["error"] == "invalid_token"
+    end
+
+    test "a hostile request Host cannot select the accepted audience", %{config: config} do
+      attacker_resource = "https://attacker.example/mcp"
+      token = Factory.access_token(config, audience: attacker_resource, scopes: [Scopes.tools_call()])
+
+      conn =
+        :post
+        |> conn(attacker_resource)
+        |> put_req_header("authorization", "Bearer " <> token)
+        |> protect(config,
+          scopes: [Scopes.tools_call()],
+          resource_path: "/mcp",
           base_url: "https://mcp.example.com",
           resource_audience: :resource
         )
@@ -91,7 +112,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
         |> put_req_header("authorization", "Bearer " <> token)
         |> protect(config,
           scopes: [Scopes.tools_call()],
-          resource: "/mcp",
+          resource_path: "/mcp",
           base_url: "https://mcp.example.com",
           resource_audience: :resource
         )
@@ -115,7 +136,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
         |> put_req_header("authorization", "Bearer " <> token)
         |> protect(config,
           scopes: [Scopes.tools_call()],
-          resource: "/mcp",
+          resource_path: "/mcp",
           base_url: "https://mcp.example.com",
           resource_audience: :resource
         )
@@ -129,7 +150,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
         ProtectResource.init(
           config: config,
           scopes: [Scopes.tools_call()],
-          resource: "/mcp",
+          resource_path: "/mcp",
           resource_audience: :resource,
           trusted_audiences: ["https://mcp.example.com/admin"]
         )
@@ -146,13 +167,63 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       end
     end
 
+    test "rejects a Host-derived resource audience without a pinned origin", %{config: config} do
+      assert_raise ArgumentError, ~r/requires a pinned :base_url or :origin/, fn ->
+        ProtectResource.init(
+          config: config,
+          scopes: [Scopes.tools_call()],
+          resource_path: "/mcp",
+          resource_audience: :resource
+        )
+      end
+
+      assert_raise ArgumentError, ~r/requires a pinned :base_url or :origin/, fn ->
+        Authenticate.init(
+          config: config,
+          resource_path: "/mcp",
+          resource_audience: :resource
+        )
+      end
+    end
+
+    test "rejects malformed literal pins during initialization", %{config: config} do
+      for pin <- ["", "mcp.example.com", "http://mcp.example.com", "https://mcp.example.com?tenant=one"] do
+        assert_raise ArgumentError, ~r/:base_url/, fn ->
+          ProtectResource.init(
+            config: config,
+            scopes: [Scopes.tools_call()],
+            resource_path: "/mcp",
+            base_url: pin,
+            resource_audience: :resource
+          )
+        end
+      end
+    end
+
+    test "an invalid pin callback fails closed instead of using the request Host", %{config: config} do
+      protection =
+        ProtectResource.init(
+          config: config,
+          scopes: [Scopes.tools_call()],
+          resource_path: "/mcp",
+          base_url: fn _conn -> nil end,
+          resource_audience: :resource
+        )
+
+      assert_raise ArgumentError, ~r/:base_url/, fn ->
+        :post
+        |> conn("https://attacker.example/mcp")
+        |> ProtectResource.call(protection)
+      end
+    end
+
     test "rejects malformed resource audience policy forms at initialization", %{config: config} do
       for malformed <- [:resourse, fn -> config.audience end, ""] do
         assert_raise ArgumentError, ~r/:resource_audience must be/, fn ->
           ProtectResource.init(
             config: config,
             scopes: [Scopes.tools_call()],
-            resource: "/mcp",
+            resource_path: "/mcp",
             resource_audience: malformed
           )
         end
@@ -174,7 +245,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
         |> put_req_header("authorization", "Bearer " <> token)
         |> protect(config,
           scopes: [Scopes.tools_call()],
-          resource: "/mcp/reports",
+          resource_path: "/mcp/reports",
           resource_audience: false,
           trusted_audiences: [resource]
         )
@@ -202,7 +273,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
           |> put_req_header("authorization", "Bearer " <> token)
           |> protect(config,
             scopes: [Scopes.tools_call()],
-            resource: "/mcp/reports",
+            resource_path: "/mcp/reports",
             resource_audience: resource_audience
           )
 
@@ -220,7 +291,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
         |> put_req_header("authorization", "Bearer " <> token)
         |> protect(config,
           scopes: [Scopes.tools_call()],
-          resource: "/mcp",
+          resource_path: "/mcp",
           resource_audience: fn _conn -> nil end
         )
 
@@ -238,7 +309,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
         |> put_req_header("authorization", "Bearer " <> token)
         |> protect(config,
           scopes: [Scopes.tools_call()],
-          resource: "/mcp/reports",
+          resource_path: "/mcp/reports",
           base_url: "https://mcp.example.com",
           resource_audience: :resource
         )
@@ -266,7 +337,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
           |> protect(config,
             config: config_callback,
             scopes: [Scopes.tools_call()],
-            resource: "/mcp/reports",
+            resource_path: "/mcp/reports",
             base_url: "https://mcp.example.com",
             resource_audience: :resource
           )
@@ -285,7 +356,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
         :post
         |> conn("/mcp")
         |> put_req_header("authorization", "Bearer " <> token)
-        |> protect(config, scopes: [Scopes.tools_call()], resource: "/mcp")
+        |> protect(config, scopes: [Scopes.tools_call()], resource_path: "/mcp")
 
       refute conn.halted
     end
@@ -327,7 +398,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
 
     conn =
       %{"access_token" => token}
-      |> form_post()
+      |> Factory.form_post()
       |> protect(config, scopes: [Scopes.tools_call()])
 
     assert conn.halted
@@ -340,7 +411,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
 
     conn =
       %{"access_token" => token}
-      |> form_post()
+      |> Factory.form_post()
       |> protect(config, scopes: [Scopes.tools_call()], bearer_methods: [:header, :body])
 
     refute conn.halted
@@ -377,7 +448,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
 
   test "a DPoP-bound token is accepted with a valid proof", %{config: config} do
     jwk = Factory.dpop_jwk()
-    {_unused, jkt} = Factory.dpop_proof("placeholder", jwk: jwk)
+    jkt = Factory.dpop_jkt(jwk)
     token = Factory.access_token(config, dpop_jkt: jkt, scopes: [Scopes.tools_call()])
     {proof, ^jkt} = Factory.dpop_proof(token, jwk: jwk)
 
@@ -396,11 +467,16 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     conn =
       :post
       |> conn("https://mcp.example.com/mcp/brokers")
-      |> protect(config, scopes: [Scopes.tools_call()], resource: "/mcp/brokers")
+      |> protect(config, scopes: [Scopes.tools_call()], resource_path: "/mcp/brokers")
 
     assert conn.halted
     assert [challenge] = get_resp_header(conn, "www-authenticate")
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/brokers")
+  end
+
+  test "the deprecated :resource path alias remains compatible", %{config: config} do
+    protection = ProtectResource.init(config: config, scopes: [Scopes.tools_call()], resource: "/legacy")
+    assert Keyword.fetch!(protection.authenticate, :resource_path) == "/legacy"
   end
 
   test "a pinned :base_url drives the challenge URL over the request host", %{config: config} do
@@ -412,7 +488,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       |> conn("http://10.0.0.5/mcp/brokers")
       |> protect(config,
         scopes: [Scopes.tools_call()],
-        resource: "/mcp/brokers",
+        resource_path: "/mcp/brokers",
         base_url: "https://mcp.example.com"
       )
 
@@ -432,7 +508,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       |> put_req_header("authorization", "Bearer " <> token)
       |> protect(config,
         scopes: [Scopes.tools_call()],
-        resource: "/mcp/brokers",
+        resource_path: "/mcp/brokers",
         base_url: "https://mcp.example.com"
       )
 
@@ -451,7 +527,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       |> put_req_header("authorization", "Bearer " <> token)
       |> protect(config,
         scopes: [Scopes.tools_call()],
-        resource: "/mcp/brokers",
+        resource_path: "/mcp/brokers",
         base_url: "https://mcp.example.com",
         principal: fn _claims, _sender -> {:error, :rejected} end
       )
@@ -473,7 +549,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       |> put_req_header("authorization", "Bearer " <> token)
       |> protect(config,
         scopes: [Scopes.tools_call()],
-        resource: "/mcp/brokers",
+        resource_path: "/mcp/brokers",
         www_authenticate: fn c, _challenge -> put_resp_header(c, "www-authenticate", "Custom realm=x") end
       )
 
@@ -568,8 +644,8 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       protection =
         ProtectResource.prepare(
           config: config,
-          htu: fn _conn -> Factory.htu() end,
-          resource: "/mcp",
+          htu: &Factory.htu/1,
+          resource_path: "/mcp",
           scopes_key: :custom_scopes
         )
 
@@ -592,8 +668,8 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       boundary_b =
         ProtectResource.prepare(
           config: config,
-          htu: fn _conn -> Factory.htu() end,
-          resource: "/mcp",
+          htu: &Factory.htu/1,
+          resource_path: "/mcp",
           step_up: [acr_values: ["phr"]]
         )
 
@@ -616,8 +692,8 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       static =
         ProtectResource.init(
           config: config,
-          htu: fn _conn -> Factory.htu() end,
-          resource: "/mcp",
+          htu: &Factory.htu/1,
+          resource_path: "/mcp",
           scopes: [Scopes.tools_call()]
         )
 
@@ -663,7 +739,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
 
     test "dynamic DPoP authentication verifies the proof only once", %{config: config} do
       jwk = Factory.dpop_jwk()
-      {_unused, jkt} = Factory.dpop_proof("placeholder", jwk: jwk)
+      jkt = Factory.dpop_jkt(jwk)
       token = Factory.access_token(config, dpop_jkt: jkt, scopes: [Scopes.tools_call()])
       {proof, ^jkt} = Factory.dpop_proof(token, jwk: jwk)
       protection = dynamic_protection(config, replay_check: DPoPReplay.callback())
@@ -729,7 +805,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     test "prepare/1 is escape-safe" do
       opts = [
         config: &Factory.config/0,
-        resource: "/mcp",
+        resource_path: "/mcp",
         base_url: "https://mcp.example.com"
       ]
 
@@ -744,7 +820,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     # baked into init - otherwise the router carrying this plug will not compile.
     opts = [
       config: &Factory.config/0,
-      resource: "/mcp",
+      resource_path: "/mcp",
       scopes: [Scopes.tools_call()],
       base_url: "https://mcp.example.com"
     ]
@@ -779,7 +855,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       |> put_req_header("authorization", "Bearer " <> token)
       |> protect(config,
         scopes: [Scopes.tools_call()],
-        resource: "/mcp",
+        resource_path: "/mcp",
         resource_metadata_url: fn _conn -> nil end
       )
 
@@ -801,7 +877,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     refute challenge =~ "resource_metadata="
   end
 
-  test "unsafe metadata callback URLs are omitted on insufficient-scope responses", %{config: config} do
+  test "unsafe metadata callback URLs use the validated derived fallback", %{config: config} do
     token = Factory.access_token(config, scopes: [Scopes.resources_read()])
 
     conn =
@@ -810,13 +886,32 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       |> put_req_header("authorization", "Bearer " <> token)
       |> protect(config,
         scopes: [Scopes.tools_call()],
-        resource: "/mcp",
+        resource_path: "/mcp",
         resource_metadata_url: fn _conn -> "https://user:pass@mcp.example.com/metadata" end
       )
 
     assert conn.status == 403
     assert [challenge] = get_resp_header(conn, "www-authenticate")
-    refute challenge =~ "resource_metadata="
+    assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+  end
+
+  test "malformed literal resource_metadata URLs fail at initialization", %{config: config} do
+    for url <- ["", "mcp.example.com/metadata", "http://mcp.example.com/metadata", "https://user:pass@mcp.example.com"] do
+      assert_raise ArgumentError, ~r/:resource_metadata_url/, fn ->
+        ProtectResource.init(
+          config: config,
+          scopes: [Scopes.tools_call()],
+          resource_metadata_url: url
+        )
+      end
+    end
+
+    assert ProtectResource.init(
+             config: config,
+             scopes: [Scopes.tools_call()],
+             resource_metadata_url: "http://localhost:4000/.well-known/oauth-protected-resource",
+             allow_http: true
+           )
   end
 
   test "compiles inside a Plug.Builder pipeline under init_mode: :compile" do
@@ -826,7 +921,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
 
       plug ProtectResource,
         config: &Factory.config/0,
-        resource: "/mcp",
+        resource_path: "/mcp",
         scopes: ["mcp:tools:call"],
         base_url: "https://mcp.example.com"
     end
@@ -837,7 +932,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
   end
 
   defp dpop_jkt do
-    {_proof, jkt} = Factory.dpop_proof("placeholder")
+    jkt = Factory.dpop_jwk() |> Factory.dpop_jkt()
     jkt
   end
 
@@ -860,7 +955,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       Keyword.merge(
         [
           config: config,
-          htu: fn _conn -> Factory.htu() end
+          htu: &Factory.htu/1
         ],
         opts
       )
@@ -873,17 +968,11 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       Keyword.merge(
         [
           config: config,
-          htu: fn _conn -> Factory.htu() end,
-          resource: "/mcp"
+          htu: &Factory.htu/1,
+          resource_path: "/mcp"
         ],
         opts
       )
     )
-  end
-
-  defp form_post(params) do
-    :post
-    |> conn("/mcp", params)
-    |> put_req_header("content-type", "application/x-www-form-urlencoded")
   end
 end

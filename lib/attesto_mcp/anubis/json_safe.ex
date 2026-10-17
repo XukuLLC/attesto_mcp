@@ -28,6 +28,8 @@ defmodule AttestoMCP.Anubis.JSONSafe do
   # (JSON-safe) value, so it cannot collide with a legitimate sanitized value the
   # way a bare atom sentinel could (a real `:__drop__` in the input would then be
   # wrongly filtered).
+  alias AttestoMCP.Anubis.SessionConfig
+
   @drop {__MODULE__, :__drop__}
 
   @doc """
@@ -37,7 +39,7 @@ defmodule AttestoMCP.Anubis.JSONSafe do
   descend into) sanitizes to an empty map, so the return is always encodable.
   """
   @spec sanitize(term(), module()) :: term()
-  def sanitize(value, json_library \\ default_json_library()) when is_atom(json_library) do
+  def sanitize(value, json_library \\ SessionConfig.json_library()) when is_atom(json_library) do
     sanitized =
       case safe(value, json_library) do
         @drop -> %{}
@@ -137,6 +139,4 @@ defmodule AttestoMCP.Anubis.JSONSafe do
   catch
     _kind, _reason -> :error
   end
-
-  defp default_json_library, do: Application.get_env(:postgrex, :json_library, Jason)
 end

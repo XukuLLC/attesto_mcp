@@ -69,13 +69,12 @@ if Code.ensure_loaded?(Anubis.Server.Session.Store) and Code.ensure_loaded?(Ecto
     alias Anubis.Server.Session.Store
     alias AttestoMCP.Anubis.JSONSafe
     alias AttestoMCP.Anubis.Session
+    alias AttestoMCP.Anubis.SessionConfig
 
     require Logger
 
     @app :anubis_mcp
 
-    # Matches the Anubis Redis adapter default: 30 minutes, in milliseconds.
-    @default_ttl_ms 1_800_000
     @max_session_id_bytes 255
 
     # Anubis adds the configured store as `{adapter, config}`, so the adapter must
@@ -160,10 +159,9 @@ if Code.ensure_loaded?(Anubis.Server.Session.Store) and Code.ensure_loaded?(Ecto
     def delete(session_id, _opts) do
       if valid_session_id?(session_id) do
         repo().delete_all(from(s in Session, where: s.session_id == ^session_id))
-        :ok
-      else
-        :ok
       end
+
+      :ok
     rescue
       _exception -> persistence_failure()
     end
@@ -215,7 +213,6 @@ if Code.ensure_loaded?(Anubis.Server.Session.Store) and Code.ensure_loaded?(Ecto
         {:ok, :ok} -> :ok
         {:error, :not_found} -> {:error, :not_found}
         {:error, :persistence_failed} = error -> error
-        {:error, _reason} -> persistence_failure()
       end
     end
 
@@ -257,7 +254,7 @@ if Code.ensure_loaded?(Anubis.Server.Session.Store) and Code.ensure_loaded?(Ecto
     defp json_library do
       @app
       |> Application.get_env(:session_store, [])
-      |> Keyword.get(:json_library, Application.get_env(:postgrex, :json_library, Jason))
+      |> Keyword.get(:json_library, SessionConfig.json_library())
     end
 
     defp valid_session_id?(session_id) when is_binary(session_id) do
@@ -269,7 +266,7 @@ if Code.ensure_loaded?(Anubis.Server.Session.Store) and Code.ensure_loaded?(Ecto
     defp valid_session_id?(_session_id), do: false
 
     defp config_ttl_ms do
-      @app |> Application.get_env(:session_store, []) |> Keyword.get(:ttl, @default_ttl_ms)
+      @app |> Application.get_env(:session_store, []) |> Keyword.get(:ttl, SessionConfig.default_ttl_ms())
     end
 
     # Anubis persists string-keyed JSON; keep merge keys as strings so a later

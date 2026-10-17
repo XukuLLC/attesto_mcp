@@ -67,14 +67,12 @@ if Code.ensure_loaded?(Igniter) do
 
     use Igniter.Mix.Task
 
+    alias AttestoMCP.Anubis.SessionConfig
     alias Igniter.Mix.Task.Info
     alias Igniter.Project.Config
     alias Igniter.Project.Deps
     alias Mix.Tasks.AttestoMcp.Install.Sessions.Docs
 
-    # 30 minutes in milliseconds — matches the Anubis Redis adapter default and
-    # `AttestoMCP.Anubis.SessionStore.Ecto`'s own default.
-    @default_ttl_ms 1_800_000
     @horde_requirement "~> 0.9"
 
     @impl Igniter.Mix.Task
@@ -101,7 +99,7 @@ if Code.ensure_loaded?(Igniter) do
         enabled: true,
         adapter: AttestoMCP.Anubis.SessionStore.Ecto,
         repo: repo,
-        ttl: @default_ttl_ms
+        ttl: SessionConfig.default_ttl_ms()
       )
       |> maybe_add_horde(registry?)
       |> Igniter.add_notice(notice(repo, registry?))
@@ -171,7 +169,7 @@ else
       Mix.shell().error("""
       The task 'attesto_mcp.install.sessions' requires igniter.
 
-      Add `{:igniter, ">= 0.6.0 and < 1.0.0", only: [:dev, :test]}` to your
+      Add `{:igniter, ">= 0.6.0 and < 0.8.1 or >= 0.8.4 and < 1.0.0", only: [:dev, :test]}` to your
       deps and run `mix deps.get`, then re-run this task.
       """)
 

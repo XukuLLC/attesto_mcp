@@ -30,10 +30,13 @@ defmodule AttestoMCP.MetadataTest do
     conn = conn(:get, "https://mcp.example.com/.well-known/oauth-protected-resource/mcp/user")
 
     metadata =
-      Metadata.protected_resource(conn, "/mcp/user", scopes_supported: ["mcp:user"])
+      Metadata.protected_resource(conn, "/mcp/user",
+        issuer: "https://auth.example.com",
+        scopes_supported: ["mcp:user"]
+      )
 
     assert metadata["resource"] == "https://mcp.example.com/mcp/user"
-    assert metadata["authorization_servers"] == ["https://mcp.example.com"]
+    assert metadata["authorization_servers"] == ["https://auth.example.com"]
     assert metadata["scopes_supported"] == ["mcp:user"]
   end
 
@@ -41,6 +44,9 @@ defmodule AttestoMCP.MetadataTest do
     conn = conn(:get, "https://mcp.example.com/mcp/user")
 
     assert Metadata.protected_resource_url(conn, "/mcp/user") ==
+             "https://mcp.example.com/.well-known/oauth-protected-resource/mcp/user"
+
+    assert Metadata.protected_resource_url(conn, "/mcp/user", []) ==
              "https://mcp.example.com/.well-known/oauth-protected-resource/mcp/user"
   end
 
@@ -50,12 +56,12 @@ defmodule AttestoMCP.MetadataTest do
 
     assert Metadata.resolve_origin(default_port, []) == "https://[::1]"
 
-    assert Metadata.protected_resource_url(default_port, "/mcp") ==
+    assert Metadata.protected_resource_url(default_port, "/mcp", []) ==
              "https://[::1]/.well-known/oauth-protected-resource/mcp"
 
     assert Metadata.resolve_origin(custom_port, []) == "https://[2001:db8::1]:8443"
 
-    assert Metadata.protected_resource(custom_port, "/mcp")["resource"] ==
+    assert Metadata.protected_resource(custom_port, "/mcp", issuer: "https://auth.example.com")["resource"] ==
              "https://[2001:db8::1]:8443/mcp"
   end
 
@@ -64,7 +70,11 @@ defmodule AttestoMCP.MetadataTest do
     # pinned origin must win so the advertised resource is correct/non-spoofable.
     conn = conn(:get, "http://10.0.0.5/.well-known/oauth-protected-resource/mcp")
 
-    metadata = Metadata.protected_resource(conn, "/mcp", base_url: "https://mcp.example.com")
+    metadata =
+      Metadata.protected_resource(conn, "/mcp",
+        base_url: "https://mcp.example.com",
+        issuer: "https://auth.example.com"
+      )
 
     assert metadata["resource"] == "https://mcp.example.com/mcp"
   end
@@ -72,7 +82,11 @@ defmodule AttestoMCP.MetadataTest do
   test ":origin accepts a (conn -> url) callback resolved at request time" do
     conn = conn(:get, "http://10.0.0.5/.well-known/oauth-protected-resource/mcp")
 
-    metadata = Metadata.protected_resource(conn, "/mcp", origin: fn _conn -> "https://mcp.example.com" end)
+    metadata =
+      Metadata.protected_resource(conn, "/mcp",
+        origin: fn _conn -> "https://mcp.example.com" end,
+        issuer: "https://auth.example.com"
+      )
 
     assert metadata["resource"] == "https://mcp.example.com/mcp"
   end
@@ -97,18 +111,26 @@ defmodule AttestoMCP.MetadataTest do
     assert metadata["authorization_servers"] == ["https://auth.example.com/tenant/"]
   end
 
-  test "a blank :issuer is ignored and falls through to the :config issuer" do
+  test "a blank explicit :issuer fails closed at route validation" do
     conn = conn(:get, "https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
 
-    metadata = Metadata.protected_resource(conn, "/mcp", issuer: "", config: Factory.config())
+    assert_raise ArgumentError, ~r/:issuer/, fn ->
+      Metadata.validate_metadata_options!(issuer: "", config: Factory.config())
+    end
 
-    assert metadata["authorization_servers"] == ["https://auth.example.com"]
+    assert_raise ArgumentError, ~r/:issuer must be a valid HTTPS issuer/, fn ->
+      Metadata.protected_resource(conn, "/mcp", issuer: "", config: Factory.config())
+    end
   end
 
   test "an explicit :resource overrides the derived identifier" do
     conn = conn(:get, "https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
 
-    metadata = Metadata.protected_resource(conn, "/mcp", resource: "https://canonical.example/mcp")
+    metadata =
+      Metadata.protected_resource(conn, "/mcp",
+        resource: "https://canonical.example/mcp",
+        issuer: "https://auth.example.com"
+      )
 
     assert metadata["resource"] == "https://canonical.example/mcp"
   end
@@ -130,26 +152,34 @@ defmodule AttestoMCP.MetadataTest do
   test ":base_url accepts an {module, fun} tuple resolved at request time" do
     conn = conn(:get, "http://10.0.0.5/.well-known/oauth-protected-resource/mcp")
 
-    metadata = Metadata.protected_resource(conn, "/mcp", base_url: {__MODULE__, :pinned_origin})
+    metadata =
+      Metadata.protected_resource(conn, "/mcp",
+        base_url: {__MODULE__, :pinned_origin},
+        issuer: "https://auth.example.com"
+      )
 
     assert metadata["resource"] == "https://mcp.example.com/mcp"
   end
 
   def pinned_origin(_conn), do: "https://mcp.example.com"
 
-  test "a blank :base_url is treated as not-configured and falls back to :origin then the request" do
+  test "a configured blank :base_url fails closed instead of falling back" do
     conn = conn(:get, "https://request-host.example/.well-known/oauth-protected-resource/mcp")
 
-    # Blank base_url must not produce relative/empty metadata; it yields to :origin.
-    via_origin = Metadata.protected_resource(conn, "/mcp", base_url: "", origin: "https://canonical.example")
-    assert via_origin["resource"] == "https://canonical.example/mcp"
+    assert_raise ArgumentError, ~r/:base_url/, fn ->
+      Metadata.protected_resource(conn, "/mcp",
+        base_url: "",
+        origin: "https://canonical.example",
+        issuer: "https://auth.example.com"
+      )
+    end
 
-    # With nothing usable pinned, it fails back to the request origin.
-    via_request = Metadata.protected_resource(conn, "/mcp", base_url: "")
-    assert via_request["resource"] == "https://request-host.example/mcp"
+    assert_raise ArgumentError, ~r/:base_url/, fn ->
+      Metadata.resolve_origin(conn, base_url: "")
+    end
   end
 
-  test "a slash-only or relative :base_url is rejected, never producing relative/empty metadata" do
+  test "a malformed :base_url raises instead of using the request Host or lower-precedence origin" do
     conn = conn(:get, "https://request-host.example/.well-known/oauth-protected-resource/mcp")
 
     bad_pins = [
@@ -162,20 +192,24 @@ defmodule AttestoMCP.MetadataTest do
       "https:///path",
       "ftp://x",
       "https://",
+      ~s(https://host"),
+      "https://host\\",
+      "https://host\r\nx",
       "https://user:pass@host",
       "https://host?x=1",
-      "https://host#frag"
+      "https://host#frag",
+      "https://host/%zz"
     ]
 
     for bad <- bad_pins do
-      metadata = Metadata.protected_resource(conn, "/mcp", base_url: bad)
-      assert metadata["resource"] == "https://request-host.example/mcp", "rejected pin #{inspect(bad)}"
-      assert metadata["authorization_servers"] == ["https://request-host.example"]
+      assert_raise ArgumentError, ~r/:base_url/, fn ->
+        Metadata.protected_resource(conn, "/mcp", base_url: bad, issuer: "https://auth.example.com")
+      end
     end
 
-    # A slash-only base_url yields to a valid :origin rather than the request.
-    via_origin = Metadata.protected_resource(conn, "/mcp", base_url: "/", origin: "https://canonical.example")
-    assert via_origin["resource"] == "https://canonical.example/mcp"
+    assert_raise ArgumentError, ~r/:base_url/, fn ->
+      Metadata.resolve_origin(conn, base_url: "/", origin: "https://canonical.example")
+    end
 
     # A port and a path prefix (path-prefix proxy) are legitimate and accepted.
     with_port =
@@ -188,7 +222,7 @@ defmodule AttestoMCP.MetadataTest do
     assert with_port["resource"] == "http://mcp.example.com:4000/base/mcp"
   end
 
-  test "the resource origin is resolved once and shared with the authorization_servers fallback" do
+  test "the resource origin callback is resolved once and never defines authorization_servers" do
     conn = conn(:get, "https://request-host.example/.well-known/oauth-protected-resource/mcp")
     {:ok, counter} = Agent.start_link(fn -> 0 end)
 
@@ -197,13 +231,23 @@ defmodule AttestoMCP.MetadataTest do
       "https://pinned.example"
     end
 
-    metadata = Metadata.protected_resource(conn, "/mcp", base_url: origin)
+    metadata = Metadata.protected_resource(conn, "/mcp", base_url: origin, issuer: "https://auth.example.com")
 
-    # resource and the authorization_servers fallback share one resolved origin...
     assert metadata["resource"] == "https://pinned.example/mcp"
-    assert metadata["authorization_servers"] == ["https://pinned.example"]
-    # ...and the (stateful) callback ran exactly once for the whole document.
+    assert metadata["authorization_servers"] == ["https://auth.example.com"]
     assert Agent.get(counter, & &1) == 1
+  end
+
+  test "refuses to infer authorization_servers from the request authority" do
+    conn = conn(:get, "https://attacker.example/.well-known/oauth-protected-resource/mcp")
+
+    assert_raise ArgumentError, ~r/request Host cannot define the authorization server/, fn ->
+      Metadata.validate_metadata_options!([])
+    end
+
+    assert_raise ArgumentError, ~r/requires :authorization_servers/, fn ->
+      Metadata.protected_resource(conn, "/mcp")
+    end
   end
 
   test "a :config issuer with a trailing slash is advertised verbatim" do
@@ -312,10 +356,34 @@ defmodule AttestoMCP.MetadataTest do
              "https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
   end
 
-  test "authorization server metadata delegates to Attesto discovery" do
+  test "resource paths are normalized once and reject ambiguous components" do
+    assert Metadata.normalize_resource_path!("mcp/tools") == "/mcp/tools"
+
+    assert Metadata.protected_resource_metadata_path("mcp/tools") ==
+             "/.well-known/oauth-protected-resource/mcp/tools"
+
+    for invalid <- ["/mcp/../admin", "/mcp/./tools", "/mcp?tenant=a", "/mcp#fragment"] do
+      assert_raise ArgumentError, ~r/resource_path/, fn ->
+        Metadata.normalize_resource_path!(invalid)
+      end
+    end
+
+    assert_raise ArgumentError, ~r/non-root/, fn ->
+      Metadata.normalize_resource_path!("/", allow_root: false)
+    end
+  end
+
+  test "router path helpers remain callable throughout 2.x" do
+    assert AttestoMCP.Router.normalize_resource_path!("mcp/tools") == "/mcp/tools"
+
+    assert AttestoMCP.Router.protected_resource_metadata_path("/mcp/tools") ==
+             "/.well-known/oauth-protected-resource/mcp/tools"
+  end
+
+  test "authorization server metadata is provided by Attesto discovery" do
     metadata =
       Factory.config()
-      |> Metadata.authorization_server(
+      |> Attesto.Discovery.metadata(
         authorization_endpoint: "https://auth.example.com/oauth/authorize",
         registration_endpoint: "https://auth.example.com/oauth/register"
       )
@@ -323,5 +391,26 @@ defmodule AttestoMCP.MetadataTest do
     assert metadata["issuer"] == "https://auth.example.com"
     assert metadata["authorization_endpoint"] == "https://auth.example.com/oauth/authorize"
     assert metadata["registration_endpoint"] == "https://auth.example.com/oauth/register"
+  end
+
+  test "2.x metadata compatibility helpers remain callable" do
+    resource_metadata_param = Function.capture(Metadata, :resource_metadata_param, 1)
+    append_resource_metadata = Function.capture(Metadata, :append_resource_metadata, 2)
+    authorization_server = Function.capture(Metadata, :authorization_server, 2)
+
+    assert resource_metadata_param.(~s(https://mcp.example/"quoted")) ==
+             ~s(resource_metadata="https://mcp.example/\\"quoted\\"")
+
+    assert append_resource_metadata.("Bearer", "https://mcp.example/metadata") ==
+             ~s(Bearer, resource_metadata="https://mcp.example/metadata")
+
+    metadata =
+      authorization_server.(
+        Factory.config(),
+        authorization_endpoint: "https://auth.example.com/oauth/authorize"
+      )
+
+    assert metadata["issuer"] == "https://auth.example.com"
+    assert metadata["authorization_endpoint"] == "https://auth.example.com/oauth/authorize"
   end
 end

@@ -1,8 +1,60 @@
 # Changelog
 
 All notable changes to this project are documented here. The format is based on
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
-adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Public functions
+remain compatible within 2.x where security permits; security and correctness
+fixes may tighten validation or derived defaults in a minor release.
+
+## [2.1.0] - 2026-10-17
+
+### Security
+
+- Require a canonical `:base_url` or `:origin` when
+  `resource_audience: :resource` is enabled. The access-token audience can no
+  longer be derived from the request `Host`, and malformed literal pins or
+  callback results fail closed instead of falling back to it.
+- Require every router-mounted protected-resource document to identify its
+  authorization server through `:config`, `:issuer`, or
+  `:authorization_servers`. Metadata never advertises the request authority as
+  the authorization server.
+- Validate literal `:resource_metadata_url` values during plug initialization.
+  Invalid callback results are omitted with a bounded warning and use a valid
+  configured fallback when one exists.
+
+### Changed
+
+- Require Attesto `>= 2.6.0 and < 3.0.0`, keeping the MCP boundary on the
+  security-hardened core release.
+- Require `--base-url` in `mix attesto_mcp.install` and emit the canonical URL
+  into both the protection pipeline and metadata declaration. The generated
+  metadata declaration also receives the configured Attesto callback.
+- Generate `resource_path:` in protected-resource pipelines. The ambiguous
+  `resource:` path alias remains accepted with a deprecation warning;
+  `Metadata` continues to use `resource:` for the absolute RFC 9728 identifier.
+- Normalize and validate resource paths through one implementation shared by
+  metadata routing, challenge URLs, audience checks, and the installer.
+- Reuse the options normalized by core authentication on every request and for
+  scope failures, avoiding repeated policy validation and metadata-resolver
+  construction.
+- Serve protected-resource metadata with `Cache-Control: no-store`.
+
+### Deprecated
+
+- Deprecate the compatibility helpers
+  <code>AttestoMCP.Plug.Authenticate.metadata_www_authenticate/1</code>,
+  <code>AttestoMCP.Metadata.authorization_server/2</code>,
+  <code>AttestoMCP.Metadata.resource_metadata_param/1</code>,
+  <code>AttestoMCP.Metadata.append_resource_metadata/2</code>, and the connection-only
+  <code>AttestoMCP.Metadata.protected_resource_url/2</code>. They remain callable
+  throughout the 2.x line. Use core's native
+  `:resource_metadata` option, `Attesto.Discovery.metadata/2`, or
+  `protected_resource_url/3` as appropriate.
+- Retain the hidden 2.x metadata option, callback fallback, and router path
+  helpers as compatibility entry points while routing new code through the
+  hardened metadata boundary.
+- Compile the shipped <code>AttestoMCP.Test</code> helpers when this library is
+  built as a dependency, so downstream test suites can use the documented
+  factory, replay callback, and DPoP assertions.
 
 ## [2.0.0] - 2026-10-17
 
