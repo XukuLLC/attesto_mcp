@@ -25,7 +25,9 @@ if Code.ensure_loaded?(Anubis.Server.Session.Store) and Code.ensure_loaded?(Ecto
 
     The `:repo` may also be set as `config :attesto_mcp, repo: MyApp.Repo`. Run
     `mix attesto_mcp.gen.session_migration --repo MyApp.Repo` to create the
-    backing `attesto_mcp_sessions` table.
+    backing `attesto_mcp_anubis_sessions` table. The Anubis-specific name keeps
+    this schema separate from `attesto_mcp_server`'s incompatible native
+    session record.
 
     ## No process
 

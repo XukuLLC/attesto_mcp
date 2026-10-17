@@ -1,4 +1,4 @@
-if Code.ensure_loaded?(ExUnit.Assertions) do
+if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Assertions) do
   defmodule AttestoMCP.Test.DPoPAssertions do
     @moduledoc """
     Shipped ExUnit assertions for the DPoP sender-constraint contract.
@@ -20,8 +20,8 @@ if Code.ensure_loaded?(ExUnit.Assertions) do
     (`Attesto.DPoP.compute_ath/1` via the factory), so they do not depend on any
     Attesto-internal test scaffolding.
 
-    The module compiles only when `ExUnit` is loaded, so it adds nothing to a
-    host's production build.
+    The module compiles only in development and test environments when `ExUnit`
+    is available, so it adds nothing to a host's production build.
 
     ## Usage
 

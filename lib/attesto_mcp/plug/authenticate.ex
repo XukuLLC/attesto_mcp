@@ -66,6 +66,8 @@ defmodule AttestoMCP.Plug.Authenticate do
       via `X-Forwarded-*`. When omitted, the live request origin is used. This
       origin is the resource server's own; it is independent of the `:config`
       issuer (the authorization server).
+    * `:allow_http` - permit an HTTP `resource_metadata` URL for a deliberate
+      development endpoint. HTTPS remains the default.
   """
 
   @behaviour Plug
@@ -74,6 +76,7 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   alias Attesto.Plug.Authenticate, as: AttestoAuthenticate
   alias Attesto.Plug.OAuthError
+  alias Attesto.URI, as: AttestoURI
   alias AttestoMCP.Metadata
 
   @claims_key :attesto_mcp_claims
@@ -85,8 +88,15 @@ defmodule AttestoMCP.Plug.Authenticate do
   @impl Plug
   def init(opts) when is_list(opts) do
     validate_audience_policy!(opts)
-    AttestoAuthenticate.init(core_opts(opts, @claims_key))
-    opts
+
+    normalized_core_opts =
+      opts
+      |> core_opts(Keyword.get(opts, :claims_key, @claims_key))
+      |> AttestoAuthenticate.init()
+
+    # Retain MCP-only configuration while preserving every validation and
+    # normalization performed by the core plug at pipeline initialization.
+    Keyword.merge(opts, normalized_core_opts)
   end
 
   @impl Plug
@@ -97,7 +107,6 @@ defmodule AttestoMCP.Plug.Authenticate do
       conn
       |> AttestoAuthenticate.call(
         core_opts(opts, claims_key)
-        |> resolve_config_callback()
         |> put_resource_audience(conn, opts)
       )
 
@@ -189,22 +198,6 @@ defmodule AttestoMCP.Plug.Authenticate do
     end
   end
 
-  # Attesto core resolves a zero-arity function itself, while this wrapper has
-  # historically also accepted MFA config callbacks. Normalize every supported
-  # callback form before handing the options to core so enabling route audience
-  # confinement cannot change whether a host's config callback works.
-  defp resolve_config_callback(core) do
-    config =
-      case Keyword.fetch!(core, :config) do
-        fun when is_function(fun, 0) -> fun.()
-        {module, fun} when is_atom(module) and is_atom(fun) -> apply(module, fun, [])
-        {module, fun, args} when is_atom(module) and is_atom(fun) and is_list(args) -> apply(module, fun, args)
-        config -> config
-      end
-
-    Keyword.put(core, :config, config)
-  end
-
   defp assign_context(conn, opts, claims_key) do
     claims = conn.assigns[claims_key]
     sender = sender_context(claims)
@@ -252,11 +245,8 @@ defmodule AttestoMCP.Plug.Authenticate do
   end
 
   @doc false
-  # The `WWW-Authenticate` callback that appends the RFC 9728 `resource_metadata`
-  # auth-param, shared so every rejection path the MCP plugs emit (token failure,
-  # principal rejection, and - via `ProtectResource` - scope rejection) points a
-  # client at the same metadata. Returns `nil` when the host supplied its own
-  # `:www_authenticate` (a total override) or no metadata URL can be resolved.
+  # Compatibility helper retained for callers that used the pre-2.5
+  # integration. Internal paths pass `:resource_metadata` to core instead.
   @spec metadata_www_authenticate(keyword()) :: (Plug.Conn.t(), String.t() -> Plug.Conn.t()) | nil
   def metadata_www_authenticate(opts) do
     cond do
@@ -265,7 +255,7 @@ defmodule AttestoMCP.Plug.Authenticate do
 
       metadata_url = metadata_url_resolver(opts) ->
         fn conn, challenge ->
-          rendered = render_metadata_challenge(challenge, metadata_url.(conn))
+          rendered = render_metadata_challenge(challenge, resolve_metadata_url(metadata_url, conn), opts)
           put_resp_header(conn, "www-authenticate", rendered)
         end
 
@@ -274,10 +264,38 @@ defmodule AttestoMCP.Plug.Authenticate do
     end
   end
 
-  defp render_metadata_challenge(challenge, url) when is_binary(url) and url != "",
-    do: Metadata.append_resource_metadata(challenge, url)
+  defp render_metadata_challenge(challenge, url, opts) do
+    if AttestoURI.https_identifier?(url, allow_http: Keyword.get(opts, :allow_http, false)),
+      do: Metadata.append_resource_metadata(challenge, url),
+      else: challenge
+  end
 
-  defp render_metadata_challenge(challenge, _invalid_url), do: challenge
+  @doc false
+  # Shared by core Authenticate and the MCP scope-rejection renderer. A host
+  # `:www_authenticate` callback remains a total override, so generated metadata
+  # is neither evaluated nor included in that case.
+  @spec oauth_error_metadata_opts(keyword()) :: keyword()
+  def oauth_error_metadata_opts(opts) do
+    if Keyword.has_key?(opts, :www_authenticate) do
+      []
+    else
+      []
+      |> maybe_put_opt(:resource_metadata, metadata_url_resolver(opts))
+      |> maybe_copy_opt(opts, :allow_http)
+    end
+  end
+
+  @doc false
+  # Core invokes this MFA when a host callback has a derived-path fallback.
+  # Blank/non-string results retain the historical fallback; nonempty URLs go
+  # back to core, which applies the shared URI policy.
+  @spec resolve_resource_metadata_url(Plug.Conn.t(), term(), term()) :: term()
+  def resolve_resource_metadata_url(conn, callback, fallback) do
+    case resolve_metadata_url(callback, conn) do
+      url when is_binary(url) and url != "" -> url
+      _invalid -> resolve_metadata_url(fallback, conn)
+    end
+  end
 
   defp core_opts(opts, claims_key) do
     opts
@@ -296,13 +314,16 @@ defmodule AttestoMCP.Plug.Authenticate do
     ])
     |> Keyword.put_new(:bearer_methods, [:header])
     |> Keyword.put(:claims_key, claims_key)
-    |> maybe_put_metadata_challenge(opts)
+    |> put_oauth_error_metadata(opts)
   end
 
-  defp maybe_put_metadata_challenge(core_opts, opts) do
-    case metadata_www_authenticate(opts) do
-      nil -> core_opts
-      www_authenticate -> Keyword.put_new(core_opts, :www_authenticate, www_authenticate)
+  defp put_oauth_error_metadata(core_opts, opts) do
+    if Keyword.has_key?(opts, :www_authenticate) do
+      Keyword.delete(core_opts, :resource_metadata)
+    else
+      Enum.reduce(oauth_error_metadata_opts(opts), core_opts, fn {key, value}, acc ->
+        Keyword.put(acc, key, value)
+      end)
     end
   end
 
@@ -312,17 +333,17 @@ defmodule AttestoMCP.Plug.Authenticate do
     |> metadata_url_resolver(opts)
   end
 
-  defp metadata_url_resolver(url, _opts) when is_binary(url) and url != "", do: fn _conn -> url end
+  defp metadata_url_resolver(url, _opts) when is_binary(url) and url != "", do: url
 
   defp metadata_url_resolver("", opts), do: metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
 
-  defp metadata_url_resolver(fun, opts) when is_function(fun, 1), do: validated_metadata_url(fun, opts)
+  defp metadata_url_resolver(fun, opts) when is_function(fun, 1), do: metadata_callback(fun, opts)
 
   defp metadata_url_resolver({module, fun}, opts) when is_atom(module) and is_atom(fun),
-    do: validated_metadata_url(fn conn -> apply(module, fun, [conn]) end, opts)
+    do: metadata_callback({module, fun}, opts)
 
   defp metadata_url_resolver({module, fun, args}, opts) when is_atom(module) and is_atom(fun) and is_list(args),
-    do: validated_metadata_url(fn conn -> apply(module, fun, [conn | args]) end, opts)
+    do: metadata_callback({module, fun, args}, opts)
 
   defp metadata_url_resolver(_invalid, opts),
     do: metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
@@ -332,22 +353,29 @@ defmodule AttestoMCP.Plug.Authenticate do
   # `:origin` wins over the request connection. (The issuer is not used here -
   # it is the authorization server, not the resource origin.)
   defp metadata_url_from_resource_path(path, opts) when is_binary(path) do
-    fn conn -> Metadata.protected_resource_url(conn, path, opts) end
+    origin_opts = Keyword.take(opts, [:base_url, :origin])
+    {Metadata, :protected_resource_url, [path, origin_opts]}
   end
 
   defp metadata_url_from_resource_path(_path, _opts), do: nil
 
-  defp validated_metadata_url(callback, opts) do
+  defp metadata_callback(callback, opts) do
     fallback = metadata_url_from_resource_path(Keyword.get(opts, :resource_path), opts)
 
-    fn conn ->
-      case callback.(conn) do
-        url when is_binary(url) and url != "" -> url
-        _invalid when is_function(fallback, 1) -> fallback.(conn)
-        _invalid -> nil
-      end
-    end
+    if fallback,
+      do: {__MODULE__, :resolve_resource_metadata_url, [callback, fallback]},
+      else: callback
   end
+
+  defp resolve_metadata_url(url, _conn) when is_binary(url), do: url
+  defp resolve_metadata_url(fun, conn) when is_function(fun, 1), do: fun.(conn)
+
+  defp resolve_metadata_url({module, fun}, conn) when is_atom(module) and is_atom(fun), do: apply(module, fun, [conn])
+
+  defp resolve_metadata_url({module, fun, args}, conn) when is_atom(module) and is_atom(fun) and is_list(args),
+    do: apply(module, fun, [conn | args])
+
+  defp resolve_metadata_url(_invalid, _conn), do: nil
 
   defp scopes(%{"scope" => scope}) when is_binary(scope), do: String.split(scope, ~r/\s+/, trim: true)
   defp scopes(_claims), do: []
@@ -367,18 +395,18 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   defp error_opts(opts, extra) do
     opts
-    |> Keyword.take([:send_error, :www_authenticate, :no_store])
-    |> put_metadata_challenge(opts)
+    |> Keyword.take([:send_error, :www_authenticate, :no_store, :resource_metadata, :allow_http])
+    |> put_oauth_error_metadata(opts)
     |> Keyword.merge(extra)
   end
 
-  # So a principal-callback rejection (a 401 emitted here, after token
-  # verification succeeded) carries the same `resource_metadata` pointer as the
-  # token-failure path, rather than a bare challenge.
-  defp put_metadata_challenge(taken, opts) do
-    case metadata_www_authenticate(opts) do
-      nil -> taken
-      www_authenticate -> Keyword.put_new(taken, :www_authenticate, www_authenticate)
+  defp maybe_put_opt(opts, _key, nil), do: opts
+  defp maybe_put_opt(opts, key, value), do: Keyword.put(opts, key, value)
+
+  defp maybe_copy_opt(target, source, key) do
+    case Keyword.fetch(source, key) do
+      {:ok, value} -> Keyword.put(target, key, value)
+      :error -> target
     end
   end
 

@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "1.4.0"
+  @version "2.0.0"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -107,16 +107,15 @@ defmodule AttestoMCP.MixProject do
   # package. This is gated on the env var, not just `File.dir?`, so `mix
   # hex.publish` (which runs in :dev with the sibling on disk) resolves the Hex
   # constraint rather than a path dep, which cannot be packaged. The lower
-  # bound supplies the Attesto transport hooks and hardened token,
-  # DPoP, parser, key, and wallet verification paths this MCP boundary delegates
-  # to. Attesto 2.x changes authorization-server storage contracts, not these
-  # resource-server APIs.
+  # bound supplies the shared protected-resource metadata builder, strict URI
+  # policy, transport hooks, and hardened token/DPoP verification paths this MCP
+  # boundary delegates to.
   defp attesto_dep do
     if System.get_env("ATTESTO_PATH") in ~w(1 true) and File.dir?("../attesto") and
          not Enum.any?(System.argv(), &(&1 in ["hex.build", "hex.publish"])) do
       {:attesto, path: "../attesto", override: true}
     else
-      {:attesto, ">= 1.12.2 and < 3.0.0"}
+      {:attesto, ">= 2.5.0 and < 3.0.0"}
     end
   end
 
@@ -148,6 +147,7 @@ defmodule AttestoMCP.MixProject do
         "guides/proxy_origin.md",
         "CHANGELOG.md",
         "CONTRIBUTING.md",
+        "SECURITY.md",
         "LICENSE"
       ],
       groups_for_extras: [
@@ -183,7 +183,7 @@ defmodule AttestoMCP.MixProject do
         "Complete MCP server" => "https://hexdocs.pm/attesto_mcp_server",
         "GitHub" => @url
       },
-      files: ~w(lib guides LICENSE mix.exs README.md CHANGELOG.md CONTRIBUTING.md)
+      files: ~w(lib guides LICENSE mix.exs README.md CHANGELOG.md CONTRIBUTING.md SECURITY.md)
     ]
   end
 end

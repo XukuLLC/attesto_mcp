@@ -6,7 +6,7 @@ if Code.ensure_loaded?(Mix.Ecto) do
     @shortdoc "Generates the Ecto migration backing AttestoMCP.Anubis.SessionStore.Ecto"
 
     @moduledoc """
-    Generates an Ecto migration that creates the `attesto_mcp_sessions` table
+    Generates an Ecto migration that creates the `attesto_mcp_anubis_sessions` table
     backing `AttestoMCP.Anubis.SessionStore.Ecto` (a Postgres-backed
     `Anubis.Server.Session.Store` adapter).
 
@@ -26,6 +26,11 @@ if Code.ensure_loaded?(Mix.Ecto) do
         to the repo's `priv/<repo>/migrations`.
 
     The generated migration is reversible.
+
+    Existing installations that used the former `attesto_mcp_sessions` name
+    should apply the data-preserving rename documented in the README. Do not
+    rename an `attesto_mcp_server` table that has `namespace` and `record`
+    columns; that is a different schema.
     """
 
     use Mix.Task
@@ -34,6 +39,8 @@ if Code.ensure_loaded?(Mix.Ecto) do
     import Mix.Generator
 
     @switches [repo: [:keep], migrations_path: :string]
+    @legacy_base_name "create_attesto_mcp_sessions"
+    @base_name "create_attesto_mcp_anubis_sessions"
 
     @impl Mix.Task
     def run(args) do
@@ -61,16 +68,60 @@ if Code.ensure_loaded?(Mix.Ecto) do
       path = migrations_path(repo, opts)
       create_directory(path)
 
-      base_name = "create_attesto_mcp_sessions"
-      file = Path.join(path, "#{timestamp()}_#{base_name}.exs")
+      file = Path.join(path, "#{timestamp()}_#{@base_name}.exs")
 
-      if !Enum.empty?(Path.wildcard(Path.join(path, "*_#{base_name}.exs"))) do
-        Mix.raise("migration #{inspect(base_name)} already exists in #{path}; remove it before regenerating")
+      if !Enum.empty?(Path.wildcard(Path.join(path, "*_#{@base_name}.exs"))) do
+        Mix.raise("migration #{inspect(@base_name)} already exists in #{path}; remove it before regenerating")
       end
 
-      assigns = [module: Module.concat([repo, Migrations, Macro.camelize(base_name)])]
+      reject_legacy_anubis_migration!(path)
+
+      assigns = [module: Module.concat([repo, Migrations, Macro.camelize(@base_name)])]
       create_file(file, migration_template(assigns))
       file
+    end
+
+    defp reject_legacy_anubis_migration!(path) do
+      path
+      |> Path.join("*_#{@legacy_base_name}.exs")
+      |> Path.wildcard()
+      |> Enum.find(&legacy_anubis_migration?/1)
+      |> case do
+        nil ->
+          :ok
+
+        legacy_file ->
+          Mix.raise("""
+          found a former AttestoMCP Anubis session migration at #{legacy_file}.
+
+          Do not generate a second, empty session table. Follow the
+          data-preserving rename in the README section "Upgrading the Anubis
+          Ecto session table" before starting upgraded nodes.
+
+          An attesto_mcp_server migration with `namespace` and `record` columns
+          is a different schema and does not trigger this guard.
+          """)
+      end
+    end
+
+    # Both the former Anubis adapter and the native Attesto MCP Server used the
+    # same migration base name. Identify the former adapter by its generated
+    # column set, while explicitly allowing the native server's namespaced
+    # `record` schema.
+    defp legacy_anubis_migration?(file) do
+      source = File.read!(file)
+
+      old_table?(source) and
+        has_columns?(source, ~w(session_id state expires_at)a) and
+        not has_columns?(source, ~w(namespace record)a)
+    end
+
+    defp old_table?(source), do: Regex.match?(~r/\btable\s*\(\s*:attesto_mcp_sessions\b/, source)
+
+    defp has_columns?(source, columns) do
+      Enum.all?(columns, fn column ->
+        Regex.match?(~r/\badd\s*(?:\(\s*)?:#{column}\b/, source)
+      end)
     end
 
     defp migrations_path(repo, opts) do
@@ -107,7 +158,7 @@ if Code.ensure_loaded?(Mix.Ecto) do
       use Ecto.Migration
 
       def up do
-        create table(:attesto_mcp_sessions, primary_key: false) do
+        create table(:attesto_mcp_anubis_sessions, primary_key: false) do
           add :session_id, :string, primary_key: true, null: false
           add :state, :map, null: false
           add :expires_at, :utc_datetime_usec, null: false
@@ -116,11 +167,11 @@ if Code.ensure_loaded?(Mix.Ecto) do
         end
 
         # Supports both the active-session lookup and the expired-row sweep.
-        create index(:attesto_mcp_sessions, [:expires_at])
+        create index(:attesto_mcp_anubis_sessions, [:expires_at])
       end
 
       def down do
-        drop table(:attesto_mcp_sessions)
+        drop table(:attesto_mcp_anubis_sessions)
       end
     end
     """)

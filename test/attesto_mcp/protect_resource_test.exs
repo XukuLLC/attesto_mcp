@@ -801,6 +801,24 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     refute challenge =~ "resource_metadata="
   end
 
+  test "unsafe metadata callback URLs are omitted on insufficient-scope responses", %{config: config} do
+    token = Factory.access_token(config, scopes: [Scopes.resources_read()])
+
+    conn =
+      :post
+      |> conn("https://mcp.example.com/mcp")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> protect(config,
+        scopes: [Scopes.tools_call()],
+        resource: "/mcp",
+        resource_metadata_url: fn _conn -> "https://user:pass@mcp.example.com/metadata" end
+      )
+
+    assert conn.status == 403
+    assert [challenge] = get_resp_header(conn, "www-authenticate")
+    refute challenge =~ "resource_metadata="
+  end
+
   test "compiles inside a Plug.Builder pipeline under init_mode: :compile" do
     defmodule CompiledMCPPipeline do
       @moduledoc false

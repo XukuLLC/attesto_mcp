@@ -42,32 +42,18 @@ defmodule AttestoMCP.Metadata do
   alias Attesto.Config
   alias Attesto.Discovery
   alias Attesto.DPoP
+  alias Attesto.ProtectedResourceMetadata
   alias AttestoMCP.Scopes
-
-  @protected_resource_fields ~w(
-    authorization_details_types_supported
-    bearer_methods_supported
-    dpop_bound_access_tokens_required
-    dpop_signing_alg_values_supported
-    jwks_uri
-    resource_documentation
-    resource_name
-    resource_policy_uri
-    resource_signing_alg_values_supported
-    resource_tos_uri
-    scopes_supported
-    signed_metadata
-    tls_client_certificate_bound_access_tokens
-  )a
 
   @doc """
   Build an RFC 9728 protected-resource metadata document.
 
   Required options:
 
-    * `:resource` - an absolute HTTP(S) protected resource identifier with no
+    * `:resource` - an absolute HTTPS protected resource identifier with no
       fragment, usually the canonical MCP server URI such as
-      `"https://mcp.example.com/mcp"`.
+      `"https://mcp.example.com/mcp"`. Pass `allow_http: true` for a deliberate
+      local development endpoint.
     * `:authorization_servers` - a non-empty, unique list of HTTPS issuer
       identifiers with no query or fragment.
 
@@ -77,20 +63,16 @@ defmodule AttestoMCP.Metadata do
   """
   @spec protected_resource(keyword()) :: %{required(String.t()) => term()}
   def protected_resource(opts) when is_list(opts) do
-    resource = Keyword.fetch!(opts, :resource)
+    _resource = Keyword.fetch!(opts, :resource)
     authorization_servers = Keyword.fetch!(opts, :authorization_servers)
 
-    validate_resource!(resource)
     validate_authorization_servers!(authorization_servers)
 
-    %{
-      "authorization_servers" => authorization_servers,
-      "resource" => resource
-    }
-    |> put_new(:bearer_methods_supported, ["header"])
-    |> put_new(:dpop_signing_alg_values_supported, DPoP.allowed_algs())
-    |> put_new(:scopes_supported, Scopes.all())
-    |> merge_supported_fields(opts)
+    opts
+    |> put_default(:bearer_methods_supported, ["header"])
+    |> put_default(:dpop_signing_alg_values_supported, DPoP.allowed_algs())
+    |> put_default(:scopes_supported, Scopes.all())
+    |> ProtectedResourceMetadata.metadata()
   end
 
   @doc """
@@ -222,17 +204,11 @@ defmodule AttestoMCP.Metadata do
   @spec authorization_server(Config.t(), keyword()) :: %{required(String.t()) => term()}
   def authorization_server(%Config{} = config, opts \\ []), do: Discovery.metadata(config, opts)
 
-  defp merge_supported_fields(map, opts) do
-    Enum.reduce(@protected_resource_fields, map, fn field, acc ->
-      case Keyword.get(opts, field) do
-        nil -> acc
-        value -> Map.put(acc, Atom.to_string(field), value)
-      end
-    end)
-  end
-
-  defp put_new(map, key, value) do
-    Map.put_new(map, Atom.to_string(key), value)
+  # The MCP profile publishes these values by default. A caller-supplied `nil`
+  # historically meant "use the default", so normalize it before handing field
+  # assembly to Attesto core.
+  defp put_default(opts, key, value) do
+    if is_nil(Keyword.get(opts, key)), do: Keyword.put(opts, key, value), else: opts
   end
 
   # Put a derived value only when the caller asked for derivation; the value
@@ -317,33 +293,11 @@ defmodule AttestoMCP.Metadata do
   defp config_issuer(_), do: nil
 
   defp base_url(%Plug.Conn{} = conn) do
-    scheme = Atom.to_string(conn.scheme)
-    scheme <> "://" <> conn.host <> port_suffix(scheme, conn.port)
-  end
-
-  defp port_suffix("https", 443), do: ""
-  defp port_suffix("http", 80), do: ""
-  defp port_suffix(_scheme, port), do: ":" <> Integer.to_string(port)
-
-  defp validate_resource!(resource) when is_binary(resource) do
-    case parse_uri(resource) do
-      {:ok, %URI{scheme: scheme, host: host, userinfo: nil, fragment: nil}}
-      when scheme in ["http", "https"] and is_binary(host) and host != "" ->
-        if valid_percent_encoding?(resource) do
-          :ok
-        else
-          raise ArgumentError, ":resource must not contain a malformed percent escape"
-        end
-
-      _ ->
-        raise ArgumentError,
-              ":resource must be an absolute HTTP(S) URI with a non-empty host and no fragment or userinfo"
-    end
-  end
-
-  defp validate_resource!(_resource) do
-    raise ArgumentError,
-          ":resource must be an absolute HTTP(S) URI with a non-empty host and no fragment or userinfo"
+    URI.to_string(%URI{
+      scheme: Atom.to_string(conn.scheme),
+      host: conn.host,
+      port: conn.port
+    })
   end
 
   defp validate_authorization_servers!(servers) when is_list(servers) and servers != [] do

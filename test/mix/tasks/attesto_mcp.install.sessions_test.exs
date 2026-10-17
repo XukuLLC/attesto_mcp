@@ -5,7 +5,32 @@ defmodule Mix.Tasks.AttestoMcp.Install.SessionsTest do
 
   import Igniter.Test
 
+  alias Mix.Tasks.AttestoMcp.Install.Sessions.Docs
+
   describe "mix attesto_mcp.install.sessions" do
+    test "documents the Anubis-specific session table" do
+      doc = Docs.long_doc()
+
+      assert doc =~ "`attesto_mcp_anubis_sessions` table"
+      refute doc =~ "the `attesto_mcp_sessions` table"
+      assert doc =~ ~r/do\s+not generate a fresh table/
+      assert doc =~ "data-preserving rename"
+      assert doc =~ "Upgrading the Anubis Ecto session table"
+    end
+
+    test "the notice distinguishes fresh installs from former Anubis tables" do
+      igniter =
+        phx_test_project()
+        |> Igniter.compose_task("attesto_mcp.install.sessions", ["--repo", "Test.Repo"])
+
+      assert_has_notice(igniter, fn notice ->
+        notice =~ "Fresh installation" and
+          notice =~ "do not run the fresh-create command" and
+          notice =~ "data-preserving rename" and
+          notice =~ "namespace" and notice =~ "record"
+      end)
+    end
+
     test "configures the Ecto session store with the host repo" do
       config =
         phx_test_project()

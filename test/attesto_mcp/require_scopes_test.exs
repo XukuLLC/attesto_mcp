@@ -100,6 +100,17 @@ defmodule AttestoMCP.Plug.RequireScopesTest do
     assert call == Scopes.tools_call()
   end
 
+  test "accepts the bare scope-list plug form" do
+    scope = Scopes.tools_call()
+
+    assert %{
+             claims_key: :attesto_mcp_claims,
+             required: [^scope],
+             scopes_key: :attesto_mcp_scopes,
+             transport: []
+           } = RequireScopes.init([scope])
+  end
+
   defp authenticate(conn, config) do
     Authenticate.call(conn, Authenticate.init(config: config, htu: fn _conn -> Factory.htu() end))
   end

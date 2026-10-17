@@ -13,12 +13,14 @@ defmodule AttestoMCP.MetadataTest do
       Metadata.protected_resource(
         resource: "https://mcp.example.com/mcp",
         authorization_servers: ["https://auth.example.com"],
+        acr_values_supported: ["phr"],
         resource_name: "Example MCP server",
         tls_client_certificate_bound_access_tokens: true
       )
 
     assert metadata["resource"] == "https://mcp.example.com/mcp"
     assert metadata["authorization_servers"] == ["https://auth.example.com"]
+    assert metadata["acr_values_supported"] == ["phr"]
     assert Scopes.tools_call() in metadata["scopes_supported"]
     assert metadata["bearer_methods_supported"] == ["header"]
     assert metadata["tls_client_certificate_bound_access_tokens"] == true
@@ -40,6 +42,21 @@ defmodule AttestoMCP.MetadataTest do
 
     assert Metadata.protected_resource_url(conn, "/mcp/user") ==
              "https://mcp.example.com/.well-known/oauth-protected-resource/mcp/user"
+  end
+
+  test "request-derived origins bracket IPv6 host literals" do
+    default_port = conn(:get, "https://[::1]/mcp")
+    custom_port = conn(:get, "https://[2001:db8::1]:8443/mcp")
+
+    assert Metadata.resolve_origin(default_port, []) == "https://[::1]"
+
+    assert Metadata.protected_resource_url(default_port, "/mcp") ==
+             "https://[::1]/.well-known/oauth-protected-resource/mcp"
+
+    assert Metadata.resolve_origin(custom_port, []) == "https://[2001:db8::1]:8443"
+
+    assert Metadata.protected_resource(custom_port, "/mcp")["resource"] ==
+             "https://[2001:db8::1]:8443/mcp"
   end
 
   test "an explicit :base_url pins the resource origin over the request connection" do
@@ -164,7 +181,8 @@ defmodule AttestoMCP.MetadataTest do
     with_port =
       Metadata.protected_resource(conn, "/mcp",
         base_url: "http://mcp.example.com:4000/base",
-        authorization_servers: ["https://auth.example.com"]
+        authorization_servers: ["https://auth.example.com"],
+        allow_http: true
       )
 
     assert with_port["resource"] == "http://mcp.example.com:4000/base/mcp"
@@ -227,13 +245,27 @@ defmodule AttestoMCP.MetadataTest do
     ]
 
     for resource <- invalid do
-      assert_raise ArgumentError, ~r/:resource/, fn ->
+      assert_raise ArgumentError, ~r/resource/, fn ->
         Metadata.protected_resource(
           resource: resource,
           authorization_servers: ["https://auth.example.com"]
         )
       end
     end
+  end
+
+  test "HTTP resource identifiers require an explicit development opt-in" do
+    opts = [
+      resource: "http://localhost:4000/mcp",
+      authorization_servers: ["https://auth.example.com"]
+    ]
+
+    assert_raise ArgumentError, ~r/absolute https URL/, fn ->
+      Metadata.protected_resource(opts)
+    end
+
+    assert Metadata.protected_resource(Keyword.put(opts, :allow_http, true))["resource"] ==
+             "http://localhost:4000/mcp"
   end
 
   test "requires a non-empty unique list of HTTPS authorization-server issuers" do

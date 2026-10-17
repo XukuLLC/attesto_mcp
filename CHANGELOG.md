@@ -4,6 +4,52 @@ All notable changes to this project are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and this project
 adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-10-17
+
+### Breaking
+
+- Require Attesto `>= 2.5.0 and < 3.0.0`. Protected-resource metadata and
+  challenge URLs now delegate to the shared core metadata and URI policies;
+  the former Attesto 1.x compatibility range cannot provide those APIs.
+- Require HTTPS protected-resource identifiers and challenge URLs by default.
+  Local development endpoints must opt in explicitly with `allow_http: true`.
+- Rename the optional Anubis Ecto session table from `attesto_mcp_sessions` to
+  `attesto_mcp_anubis_sessions`. Existing Anubis deployments must stop old
+  writers and apply the reversible table, constraint, and index rename in the
+  README before starting upgraded nodes. A rolling mixed-version deployment is
+  not supported for this migration.
+
+### Security
+
+- Validate generated and callback-supplied RFC 9728 metadata pointers with
+  Attesto's strict URI policy before adding them to authentication or scope
+  challenges. Host `:www_authenticate` callbacks remain total overrides.
+- Reject wildcard route requirements before authorization rather than allowing
+  a configuration that no concrete grant can satisfy under the core scope
+  catalog.
+
+### Changed
+
+- Build RFC 9728 protected-resource metadata through
+  `Attesto.ProtectedResourceMetadata`, including `acr_values_supported`, while
+  retaining MCP defaults for bearer methods, DPoP algorithms, and scopes.
+- Let core resolve function and MFA Attesto config callbacks, removing the
+  duplicate MCP-specific resolution path.
+
+### Fixed
+
+- Thread `resource_metadata` and the development-only `allow_http` option
+  consistently through token, principal, unauthenticated, and
+  insufficient-scope failures.
+- Serialize request-derived origins as URIs so IPv6 host literals are bracketed
+  in resource identifiers and protected-resource metadata URLs.
+- Preserve the normalized options returned by the core authentication plug,
+  including parsed RFC 9470 step-up requirements.
+- Preserve the documented bare scope-list form in `RequireScopes.init/1` while
+  capturing transport options from keyword configuration.
+- Exclude the shipped `AttestoMCP.Test.*` helpers from production compilation;
+  they remain available in development and test environments.
+
 ## [1.4.0] - 2026-10-15
 
 ### Security

@@ -34,7 +34,7 @@ if ecto_included? do
   # Point the store's runtime repo resolution at the test repo.
   Application.put_env(:attesto_mcp, :repo, TestRepo)
 
-  Ecto.Migrator.run(TestRepo, [{0, CreateSessions}], :up,
+  Ecto.Migrator.run(TestRepo, [{20_261_016_000_001, CreateSessions}], :up,
     all: true,
     log: false
   )

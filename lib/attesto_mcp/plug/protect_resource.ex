@@ -93,6 +93,8 @@ defmodule AttestoMCP.Plug.ProtectResource do
       omitted, the live request origin is used. This keeps the challenge URL
       aligned with a pinned metadata `resource` and closes the
       `X-Forwarded-Host` spoofing vector. See `guides/proxy_origin.md`.
+    * `:allow_http` - permit an HTTP `resource_metadata` URL for a deliberate
+      development endpoint. HTTPS remains the default.
     * `:resource_audience` - confines access tokens to this protected resource;
       `:resource` derives its audience identifier from the resource path and
       resolved origin. A scalar token audience must match, and every member of
@@ -135,14 +137,20 @@ defmodule AttestoMCP.Plug.ProtectResource do
   # shared with Authenticate so both steps render through one error envelope and
   # read the same assigns.
   @scope_keys [:scope, :scopes]
-  @shared_keys [:send_error, :www_authenticate, :no_store, :claims_key, :scopes_key]
+  @shared_keys [
+    :send_error,
+    :www_authenticate,
+    :no_store,
+    :resource_metadata,
+    :allow_http,
+    :claims_key,
+    :scopes_key
+  ]
 
-  # The escape-safe inputs (strings / atoms / `{m, f}` tuples - never a closure)
-  # RequireScopes needs to derive the same RFC 9728 `resource_metadata` challenge
-  # Authenticate uses. `:www_authenticate` is deliberately excluded: a host
-  # override is already carried in the RequireScopes transport (via `@shared_keys`)
-  # and wins there, so it never needs to be re-derived here.
-  @metadata_keys [:resource_metadata_url, :resource_path, :base_url, :origin]
+  # The escape-safe inputs RequireScopes needs to derive the same RFC 9728
+  # `resource_metadata` value Authenticate gives core. `:www_authenticate` is
+  # carried separately in the shared transport and remains a total override.
+  @metadata_keys [:resource_metadata_url, :resource_path, :base_url, :origin, :allow_http]
 
   @impl Plug
   def init(opts) when is_list(opts) do
@@ -185,10 +193,8 @@ defmodule AttestoMCP.Plug.ProtectResource do
       authenticate: Authenticate.init(authenticate_opts(opts)),
       require_scopes: nil,
       scope_opts: Keyword.take(opts, @shared_keys),
-      # Escape-safe spec used to build the scope-rejection `resource_metadata`
-      # challenge at CALL time. Baking the generated `:www_authenticate` closure
-      # into init/1 would make the result non-escapable, so the plug could not be
-      # used as a compile-time router pipeline plug (`plug_init_mode: :compile`).
+      # Escape-safe inputs used to build the scope-rejection
+      # `:resource_metadata` core option at call time.
       metadata_challenge: metadata_challenge_opts(opts)
     }
   end
@@ -260,10 +266,9 @@ defmodule AttestoMCP.Plug.ProtectResource do
     |> Keyword.take(@metadata_keys)
   end
 
-  # At CALL time, build the generated `resource_metadata` challenge from the
-  # escape-safe spec and inject it into the RequireScopes transport, so an
-  # insufficient_scope 403 points the client at metadata too. `put_new` means a
-  # host-supplied `:www_authenticate` (already in the transport) wins.
+  # At call time, pass the generated `resource_metadata` resolver through
+  # OAuthError's native option. A host `:www_authenticate` remains a total
+  # override and suppresses generated metadata evaluation.
   defp put_metadata_challenge(require_scopes, metadata_challenge) do
     Map.update(
       require_scopes,
@@ -274,12 +279,13 @@ defmodule AttestoMCP.Plug.ProtectResource do
   end
 
   defp metadata_transport(transport, metadata_challenge) do
-    case Authenticate.metadata_www_authenticate(metadata_challenge) do
-      nil ->
-        transport
-
-      www_authenticate ->
-        Keyword.put_new(transport, :www_authenticate, www_authenticate)
+    if Keyword.has_key?(transport, :www_authenticate) do
+      Keyword.delete(transport, :resource_metadata)
+    else
+      metadata_challenge
+      |> Keyword.merge(transport)
+      |> Authenticate.oauth_error_metadata_opts()
+      |> Enum.reduce(transport, fn {key, value}, acc -> Keyword.put(acc, key, value) end)
     end
   end
 
@@ -298,7 +304,7 @@ defmodule AttestoMCP.Plug.ProtectResource do
 
     transport =
       protection.scope_opts
-      |> Keyword.take([:send_error, :www_authenticate, :no_store])
+      |> Keyword.take([:send_error, :www_authenticate, :no_store, :resource_metadata, :allow_http])
       |> metadata_transport(protection.metadata_challenge)
 
     OAuthError.unauthorized(

@@ -23,7 +23,7 @@ if Code.ensure_loaded?(Ecto.Schema) do
     @type t :: %__MODULE__{}
 
     @primary_key {:session_id, :string, autogenerate: false}
-    schema "attesto_mcp_sessions" do
+    schema "attesto_mcp_anubis_sessions" do
       field(:state, :map, default: %{})
       field(:expires_at, :utc_datetime_usec)
 
@@ -41,7 +41,7 @@ if Code.ensure_loaded?(Ecto.Schema) do
       session
       |> cast(attrs, @fields)
       |> validate_required([:session_id, :expires_at])
-      |> unique_constraint(:session_id, name: :attesto_mcp_sessions_pkey)
+      |> unique_constraint(:session_id, name: :attesto_mcp_anubis_sessions_pkey)
     end
   end
 end

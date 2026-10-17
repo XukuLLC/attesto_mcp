@@ -1,4 +1,4 @@
-if Code.ensure_loaded?(ExUnit.Callbacks) do
+if Mix.env() in [:dev, :test] and Code.ensure_loaded?(ExUnit.Callbacks) do
   defmodule AttestoMCP.Test.Factory do
     @moduledoc """
     Test fixtures for exercising a host MCP server's Attesto pipeline.
@@ -10,9 +10,9 @@ if Code.ensure_loaded?(ExUnit.Callbacks) do
     `Attesto.Config.new/1`, `Attesto.Keystore.Static`) plus JOSE, so it has no
     dependency on any Attesto-internal test scaffolding.
 
-    The module compiles only when `ExUnit` is loaded (it registers an
-    `ExUnit.Callbacks.on_exit/1` cleanup in `config/0`), so it adds nothing to a
-    host's production build.
+    The module compiles only in development and test environments when `ExUnit`
+    is available (it registers an `ExUnit.Callbacks.on_exit/1` cleanup in
+    `config/0`), so it adds nothing to a host's production build.
 
         defmodule MyApp.MCPAuthTest do
           use ExUnit.Case

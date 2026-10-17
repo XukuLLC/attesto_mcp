@@ -30,8 +30,13 @@ defmodule Mix.Tasks.AttestoMcp.Install.Sessions.Docs do
     What it leaves to you (printed as a notice, because the locations are
     app-specific and must not be blind-edited):
 
-      * run `mix attesto_mcp.gen.session_migration --repo <Repo>` to create the
-        `attesto_mcp_sessions` table;
+      * for a fresh installation, run
+        `mix attesto_mcp.gen.session_migration --repo <Repo>` to create the
+        `attesto_mcp_anubis_sessions` table;
+      * if an existing Anubis installation already has the former
+        `attesto_mcp_sessions` table with `state` and `expires_at` columns, do
+        not generate a fresh table. Follow the data-preserving rename in the
+        README section "Upgrading the Anubis Ecto session table";
       * with `--registry`, wire `registry: {AttestoMCP.Anubis.Registry.Horde, []}`
         into your Anubis server child spec, and connect the nodes (e.g.
         `libcluster`).
@@ -122,9 +127,15 @@ if Code.ensure_loaded?(Igniter) do
       `config :anubis_mcp, :session_store` now points at
       AttestoMCP.Anubis.SessionStore.Ecto (repo: #{inspect(repo)}).
 
-      Next step — create the backing table:
+      Fresh installation — create the backing table:
 
           mix attesto_mcp.gen.session_migration --repo #{inspect(repo)}
+
+      Existing Anubis installation — if `attesto_mcp_sessions` has `state` and
+      `expires_at` columns, do not run the fresh-create command. Follow the
+      data-preserving rename in the README section "Upgrading the Anubis Ecto
+      session table". An attesto_mcp_server table with `namespace` and `record`
+      columns is a different schema and must remain in place.
       """
 
       if registry? do

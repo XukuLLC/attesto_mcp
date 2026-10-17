@@ -6,6 +6,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
   import Plug.Test
 
   alias Anubis.Server.Frame
+  alias Attesto.StepUp.Requirement
   alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Test.DPoPReplay
   alias AttestoMCP.Test.Factory
@@ -283,6 +284,44 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
   end
 
+  test "unsafe resource metadata callback URLs are omitted by core", %{config: config} do
+    unsafe_urls = [
+      "javascript:alert(1)",
+      "https://user:pass@mcp.example.com/metadata",
+      "https://mcp.example.com/metadata#fragment",
+      "https://mcp.example.com/%ZZ",
+      "http://localhost:4000/.well-known/oauth-protected-resource/mcp"
+    ]
+
+    for unsafe <- unsafe_urls do
+      conn =
+        :post
+        |> conn("https://mcp.example.com/mcp")
+        |> authenticate(config,
+          resource_metadata_url: fn _conn -> unsafe end,
+          resource_path: "/mcp"
+        )
+
+      assert [challenge] = get_resp_header(conn, "www-authenticate")
+      refute challenge =~ "resource_metadata="
+    end
+  end
+
+  test "HTTP resource metadata requires an explicit development opt-in", %{config: config} do
+    conn =
+      :post
+      |> conn("http://localhost:4000/mcp")
+      |> authenticate(config,
+        resource_metadata_url: fn _conn ->
+          "http://localhost:4000/.well-known/oauth-protected-resource/mcp"
+        end,
+        allow_http: true
+      )
+
+    assert [challenge] = get_resp_header(conn, "www-authenticate")
+    assert challenge =~ ~s(resource_metadata="http://localhost:4000/.well-known/oauth-protected-resource/mcp")
+  end
+
   test "direct authentication enforces a literal resource audience", %{config: config} do
     resource = "https://mcp.example.com/mcp/reports"
     token = Factory.access_token(config, audience: resource)
@@ -333,6 +372,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       |> conn("https://mcp.example.com/mcp/user")
       |> authenticate(config,
         resource_path: "/mcp/user",
+        resource_metadata_url: fn _conn -> raise "metadata callback must not run" end,
         www_authenticate: fn conn, _challenge ->
           Plug.Conn.put_resp_header(conn, "www-authenticate", "Custom realm=x")
         end
@@ -355,6 +395,21 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     opts = [config: &Factory.config/0, resource_path: "/mcp", base_url: "https://mcp.example.com"]
 
     assert opts |> Authenticate.init() |> Macro.escape()
+  end
+
+  test "init/1 preserves options normalized by the core plug" do
+    opts =
+      Authenticate.init(
+        config: &Factory.config/0,
+        resource_path: "/mcp",
+        step_up: [acr_values: ["phr"], max_age: 300]
+      )
+
+    assert Keyword.fetch!(opts, :step_up) ==
+             %Requirement{acr_values: ["phr"], max_age: 300}
+
+    assert Keyword.fetch!(opts, :bearer_methods) == [:header]
+    assert Keyword.fetch!(opts, :resource_path) == "/mcp"
   end
 
   defp authenticate(conn, config, opts \\ []) do

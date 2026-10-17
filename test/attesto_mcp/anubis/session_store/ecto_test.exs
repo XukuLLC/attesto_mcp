@@ -47,6 +47,42 @@ defmodule AttestoMCP.Anubis.SessionStore.EctoTest do
     assert {:ok, %{"client_info" => %{"name" => "c"}, "n" => 1}} = Store.load(id, [])
   end
 
+  test "documented Anubis table rename preserves legacy rows in both directions" do
+    with_isolated_migration_repo(fn ->
+      id = sid()
+      state = %{"client_info" => %{"name" => "legacy-client"}, "initialized" => true}
+      now = DateTime.utc_now() |> DateTime.to_naive()
+      expires_at = NaiveDateTime.add(now, 3_600, :second)
+
+      # Start from the current schema, apply the documented reverse migration
+      # to reproduce a pre-2.0 Anubis installation, then insert a live row under
+      # the legacy name.
+      create_isolated_current_session_table()
+      rename_anubis_table_down()
+
+      TestRepo.query!(
+        """
+        INSERT INTO attesto_mcp_sessions
+          (session_id, state, expires_at, inserted_at, updated_at)
+        VALUES ($1, $2, $3, $4, $4)
+        """,
+        [id, state, expires_at, now]
+      )
+
+      rename_anubis_table_up()
+
+      assert {:ok, ^state} = Store.load(id, [])
+
+      rename_anubis_table_down()
+
+      assert %Postgrex.Result{rows: [[^state]]} =
+               TestRepo.query!(
+                 "SELECT state FROM attesto_mcp_sessions WHERE session_id = $1",
+                 [id]
+               )
+    end)
+  end
+
   test "save sanitizes non-encodable values before the jsonb insert (no crash)" do
     id = sid()
     # A bare struct + a pid would otherwise raise in the driver and kill the session.
@@ -183,6 +219,85 @@ defmodule AttestoMCP.Anubis.SessionStore.EctoTest do
 
   test "start_link is :ignore (stateless, no process)" do
     assert Store.start_link([]) == :ignore
+  end
+
+  defp with_isolated_migration_repo(fun) do
+    schema = "attesto_mcp_rename_#{System.unique_integer([:positive])}"
+
+    config =
+      TestRepo.config()
+      |> Keyword.merge(
+        name: nil,
+        pool: DBConnection.ConnectionPool,
+        pool_size: 1,
+        prepare: :unnamed
+      )
+
+    {:ok, repo_pid} = TestRepo.start_link(config)
+    previous_repo = TestRepo.put_dynamic_repo(repo_pid)
+
+    try do
+      TestRepo.checkout(fn ->
+        TestRepo.query!(~s(CREATE SCHEMA "#{schema}"))
+        TestRepo.query!(~s(SET search_path TO "#{schema}"))
+
+        try do
+          fun.()
+        after
+          TestRepo.query!(~s(DROP SCHEMA "#{schema}" CASCADE))
+        end
+      end)
+    after
+      TestRepo.put_dynamic_repo(previous_repo)
+      Supervisor.stop(repo_pid)
+    end
+  end
+
+  defp create_isolated_current_session_table do
+    TestRepo.query!("""
+    CREATE TABLE attesto_mcp_anubis_sessions (
+      session_id varchar(255) CONSTRAINT attesto_mcp_anubis_sessions_pkey PRIMARY KEY,
+      state jsonb NOT NULL,
+      expires_at timestamp(6) without time zone NOT NULL,
+      inserted_at timestamp(6) without time zone NOT NULL,
+      updated_at timestamp(6) without time zone NOT NULL
+    )
+    """)
+
+    TestRepo.query!("""
+    CREATE INDEX attesto_mcp_anubis_sessions_expires_at_index
+    ON attesto_mcp_anubis_sessions (expires_at)
+    """)
+  end
+
+  defp rename_anubis_table_up do
+    TestRepo.query!("ALTER TABLE attesto_mcp_sessions RENAME TO attesto_mcp_anubis_sessions")
+
+    TestRepo.query!("""
+    ALTER TABLE attesto_mcp_anubis_sessions
+    RENAME CONSTRAINT attesto_mcp_sessions_pkey
+    TO attesto_mcp_anubis_sessions_pkey
+    """)
+
+    TestRepo.query!("""
+    ALTER INDEX attesto_mcp_sessions_expires_at_index
+    RENAME TO attesto_mcp_anubis_sessions_expires_at_index
+    """)
+  end
+
+  defp rename_anubis_table_down do
+    TestRepo.query!("""
+    ALTER INDEX attesto_mcp_anubis_sessions_expires_at_index
+    RENAME TO attesto_mcp_sessions_expires_at_index
+    """)
+
+    TestRepo.query!("""
+    ALTER TABLE attesto_mcp_anubis_sessions
+    RENAME CONSTRAINT attesto_mcp_anubis_sessions_pkey
+    TO attesto_mcp_sessions_pkey
+    """)
+
+    TestRepo.query!("ALTER TABLE attesto_mcp_anubis_sessions RENAME TO attesto_mcp_sessions")
   end
 end
 

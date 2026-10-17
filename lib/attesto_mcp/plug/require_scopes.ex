@@ -34,7 +34,9 @@ defmodule AttestoMCP.Plug.RequireScopes do
 
   @impl Plug
   def init(opts) when is_list(opts) do
-    if Keyword.keyword?(opts) and Keyword.has_key?(opts, :scope) and Keyword.has_key?(opts, :scopes) do
+    keyword_opts = if Keyword.keyword?(opts), do: opts, else: []
+
+    if Keyword.has_key?(keyword_opts, :scope) and Keyword.has_key?(keyword_opts, :scopes) do
       raise ArgumentError, "use either :scope or :scopes, not both"
     end
 
@@ -55,10 +57,17 @@ defmodule AttestoMCP.Plug.RequireScopes do
 
     %{
       catalog: catalog,
-      claims_key: Keyword.get(opts, :claims_key, @claims_key),
+      claims_key: Keyword.get(keyword_opts, :claims_key, @claims_key),
       required: required,
-      scopes_key: Keyword.get(opts, :scopes_key, @scopes_key),
-      transport: Keyword.take(opts, [:send_error, :www_authenticate, :no_store])
+      scopes_key: Keyword.get(keyword_opts, :scopes_key, @scopes_key),
+      transport:
+        Keyword.take(keyword_opts, [
+          :send_error,
+          :www_authenticate,
+          :no_store,
+          :resource_metadata,
+          :allow_http
+        ])
     }
   end
 
