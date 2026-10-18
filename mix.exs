@@ -141,6 +141,16 @@ defmodule AttestoMCP.MixProject do
       main: "readme",
       source_ref: "v#{@version}",
       source_url: @url,
+      # Deprecated 2.x compatibility entry points are hidden from the module
+      # index but named in the changelog; render them as code without links.
+      skip_code_autolink_to: [
+        "AttestoMCP.Test",
+        "AttestoMCP.Plug.Authenticate.metadata_www_authenticate/1",
+        "AttestoMCP.Metadata.authorization_server/2",
+        "AttestoMCP.Metadata.resource_metadata_param/1",
+        "AttestoMCP.Metadata.append_resource_metadata/2",
+        "AttestoMCP.Metadata.protected_resource_url/2"
+      ],
       extras: [
         "README.md",
         "guides/mcp_wiring.md",

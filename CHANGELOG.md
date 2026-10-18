@@ -40,7 +40,7 @@ fixes may tighten validation or derived defaults in a minor release.
 
 ### Fixed
 
-- Compile the shipped <code>AttestoMCP.Test</code> factory, replay callback,
+- Compile the shipped `AttestoMCP.Test` factory, replay callback,
   and DPoP assertions deterministically in dependency builds, independent of
   the Mix environment or ExUnit module load order. The factory now registers
   cleanup before changing the static keystore and restores any prior setting.
@@ -48,11 +48,11 @@ fixes may tighten validation or derived defaults in a minor release.
 ### Deprecated
 
 - Deprecate the compatibility helpers
-  <code>AttestoMCP.Plug.Authenticate.metadata_www_authenticate/1</code>,
-  <code>AttestoMCP.Metadata.authorization_server/2</code>,
-  <code>AttestoMCP.Metadata.resource_metadata_param/1</code>,
-  <code>AttestoMCP.Metadata.append_resource_metadata/2</code>, and the connection-only
-  <code>AttestoMCP.Metadata.protected_resource_url/2</code>. They remain callable
+  `AttestoMCP.Plug.Authenticate.metadata_www_authenticate/1`,
+  `AttestoMCP.Metadata.authorization_server/2`,
+  `AttestoMCP.Metadata.resource_metadata_param/1`,
+  `AttestoMCP.Metadata.append_resource_metadata/2`, and the connection-only
+  `AttestoMCP.Metadata.protected_resource_url/2`. They remain callable
   throughout the 2.x line. Use core's native
   `:resource_metadata` option, `Attesto.Discovery.metadata/2`, or
   `protected_resource_url/3` as appropriate.
