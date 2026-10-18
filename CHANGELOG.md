@@ -38,6 +38,13 @@ fixes may tighten validation or derived defaults in a minor release.
   construction.
 - Serve protected-resource metadata with `Cache-Control: no-store`.
 
+### Fixed
+
+- Compile the shipped <code>AttestoMCP.Test</code> factory, replay callback,
+  and DPoP assertions deterministically in dependency builds, independent of
+  the Mix environment or ExUnit module load order. The factory now registers
+  cleanup before changing the static keystore and restores any prior setting.
+
 ### Deprecated
 
 - Deprecate the compatibility helpers
@@ -52,9 +59,6 @@ fixes may tighten validation or derived defaults in a minor release.
 - Retain the hidden 2.x metadata option, callback fallback, and router path
   helpers as compatibility entry points while routing new code through the
   hardened metadata boundary.
-- Compile the shipped <code>AttestoMCP.Test</code> helpers when this library is
-  built as a dependency, so downstream test suites can use the documented
-  factory, replay callback, and DPoP assertions.
 
 ## [2.0.0] - 2026-10-17
 

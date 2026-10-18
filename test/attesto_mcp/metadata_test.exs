@@ -1,6 +1,6 @@
 defmodule AttestoMCP.MetadataTest do
   @moduledoc false
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   import Plug.Test
 

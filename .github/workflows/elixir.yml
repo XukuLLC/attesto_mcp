@@ -10,6 +10,48 @@ permissions:
   contents: read
 
 jobs:
+  packaged-test-helpers:
+    name: Packaged downstream test helpers
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Elixir
+        uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
+        with:
+          elixir-version: "1.18.4"
+          otp-version: "28.0"
+
+      - name: Install Hex and Rebar
+        run: |
+          mix local.hex --force
+          mix local.rebar --force
+
+      - name: Build and inspect the package
+        run: |
+          mix hex.build --unpack --output "${{ runner.temp }}/attesto_mcp-package"
+          test -f "${{ runner.temp }}/attesto_mcp-package/lib/attesto_mcp/test/factory.ex"
+          test -f "${{ runner.temp }}/attesto_mcp-package/lib/attesto_mcp/test/dpop_replay.ex"
+          test -f "${{ runner.temp }}/attesto_mcp-package/lib/attesto_mcp/test/dpop_assertions.ex"
+
+      - name: Compile the clean production consumer
+        working-directory: integration/packaged_test_helpers
+        env:
+          ATTESTO_MCP_PACKAGE_PATH: ${{ runner.temp }}/attesto_mcp-package
+          MIX_ENV: prod
+        run: |
+          mix deps.get
+          mix compile --warnings-as-errors
+
+      - name: Start ExUnit and exercise the packaged helpers
+        working-directory: integration/packaged_test_helpers
+        env:
+          ATTESTO_MCP_PACKAGE_PATH: ${{ runner.temp }}/attesto_mcp-package
+          MIX_ENV: prod
+        run: mix run verify.exs
+
   minimum-consumer:
     name: Minimum production consumer (Attesto 2.6.0)
     runs-on: ubuntu-latest
