@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.1.2] - 2026-10-18
+
+### Changed
+
+- Require Attesto `>= 2.6.1 and < 3.0.0`, so the resource server's
+  pre-authentication JSON nesting and bearer-token size bounds ship with every
+  deployment instead of being a recommendation.
+
 ## [2.1.1] - 2026-10-18
 
 ### Changed
