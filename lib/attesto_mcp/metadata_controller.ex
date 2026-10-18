@@ -26,6 +26,8 @@ if Code.ensure_loaded?(Phoenix.Controller) do
 
     alias AttestoMCP.Metadata
 
+    @cache_max_age_seconds 3600
+
     @doc """
     Render protected-resource metadata for the resource bound to this route.
     """
@@ -36,8 +38,11 @@ if Code.ensure_loaded?(Phoenix.Controller) do
 
       metadata = Metadata.protected_resource(conn, resource_path, metadata_opts(opts))
 
+      # The document carries no secrets and is identical for every caller, and
+      # RFC 9728 §3.1 permits caching it, so it is served with the same public
+      # one-hour policy as AttestoPhoenix's protected-resource metadata.
       conn
-      |> Plug.Conn.put_resp_header("cache-control", "no-store")
+      |> Plug.Conn.put_resp_header("cache-control", "public, max-age=#{@cache_max_age_seconds}")
       |> json(metadata)
     end
 

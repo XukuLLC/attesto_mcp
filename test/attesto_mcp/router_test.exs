@@ -176,14 +176,14 @@ defmodule AttestoMCP.RouterTest do
     end
   end
 
-  test "serves protected-resource metadata with no-store caching" do
+  test "serves protected-resource metadata with the public one-hour cache policy" do
     conn =
       "/.well-known/oauth-protected-resource/mcp/foo"
       |> build_conn()
       |> TestRouter.call(TestRouter.init([]))
 
     assert conn.status == 200
-    assert get_resp_header(conn, "cache-control") == ["no-store"]
+    assert get_resp_header(conn, "cache-control") == ["public, max-age=3600"]
   end
 
   defp get_metadata(path) do

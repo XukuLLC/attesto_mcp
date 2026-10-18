@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.1.1] - 2026-10-18
+
+### Changed
+
+- Serve the protected-resource metadata document with
+  `Cache-Control: public, max-age=3600`, the policy AttestoPhoenix applies to
+  the same document, instead of `no-store`. The document carries no secrets and
+  is identical for every caller, and RFC 9728 §3.1 permits caching it.
+
 ## [2.1.0] - 2026-10-18
 
 ### Security
