@@ -11,6 +11,7 @@ defmodule AttestoMCP.MinimumConsumer.Router do
 
   scope "/" do
     attesto_mcp_protected_resource_metadata "/mcp",
+      issuer: "https://as.example.com",
       scopes: [AttestoMCP.Scopes.tools_call()]
   end
 end
@@ -25,7 +26,7 @@ metadata = JSON.decode!(conn.resp_body)
 
 if !(conn.status == 200 and
        metadata["resource"] == "https://mcp.example.com/mcp" and
-       metadata["authorization_servers"] == ["https://mcp.example.com"] and
+       metadata["authorization_servers"] == ["https://as.example.com"] and
        AttestoMCP.Scopes.tools_call() in metadata["scopes_supported"]) do
   raise "minimum-version consumer returned invalid RFC 9728 metadata: #{inspect(conn.status)} #{inspect(metadata)}"
 end
