@@ -5,7 +5,7 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
-## [Unreleased]
+## [2.2.0] - 2026-10-19
 
 ### Added
 
