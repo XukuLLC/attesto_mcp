@@ -33,6 +33,12 @@ defmodule AttestoMCP.Plug.Authenticate do
   through logs, caches, retries, and replay tooling than an `Authorization`
   header.
 
+  Every call is wrapped in the `[:attesto_mcp, :authenticate]` telemetry
+  span described in `AttestoMCP.Telemetry`, whose `:stop` event names the
+  outcome, and the outcome is recorded on the connection for
+  `AttestoMCP.Telemetry.outcome/1`. The `:send_error` hook a host supplies
+  still renders every refusal; it is called through that recording step.
+
   Additional options:
 
     * `:resource_audience` - confines the token to this protected resource.
@@ -84,6 +90,7 @@ defmodule AttestoMCP.Plug.Authenticate do
   alias Attesto.URI, as: AttestoURI
   alias AttestoMCP.Auth
   alias AttestoMCP.Metadata
+  alias AttestoMCP.Telemetry
 
   require Logger
 
@@ -124,16 +131,17 @@ defmodule AttestoMCP.Plug.Authenticate do
   @impl Plug
   def call(conn, opts) do
     claims_key = Keyword.get(opts, :claims_key, @claims_key)
+    sender_key = Keyword.get(opts, :sender_key, @sender_key)
 
-    conn =
-      conn
-      |> AttestoAuthenticate.call(put_resource_audience(opts, conn, opts))
+    Telemetry.span(:authenticate, fn ->
+      conn =
+        conn
+        |> Telemetry.put_outcome(nil)
+        |> AttestoAuthenticate.call(put_resource_audience(opts, conn, opts))
 
-    if conn.halted do
-      conn
-    else
-      assign_context(conn, opts, claims_key)
-    end
+      conn = if conn.halted, do: conn, else: assign_context(conn, opts, claims_key)
+      {conn, Telemetry.stop_metadata(conn, sender_key)}
+    end)
   end
 
   # RFC 8707 / RFC 9728: enforce that the access token is audienced to THIS
@@ -222,13 +230,21 @@ defmodule AttestoMCP.Plug.Authenticate do
     case resolve_principal(opts, claims, sender) do
       {:ok, principal} ->
         conn
+        |> Telemetry.put_outcome(:ok)
         |> assign(Keyword.get(opts, :scopes_key, @scopes_key), scopes)
         |> assign(Keyword.get(opts, :sender_key, @sender_key), sender)
         |> assign(Keyword.get(opts, :principal_key, @principal_key), principal)
         |> assign(Keyword.get(opts, :context_key, @context_key), context(claims, scopes, principal))
 
       :error ->
-        OAuthError.unauthorized(conn, Auth.scheme(claims), "invalid_token", error_opts(opts, []))
+        # The refusal is rendered as a generic invalid_token; the recording
+        # hook is told the exact outcome because the envelope cannot show it.
+        OAuthError.unauthorized(
+          conn,
+          Auth.scheme(claims),
+          "invalid_token",
+          error_opts(opts, send_error: policy_rejection_hook(opts))
+        )
     end
   end
 
@@ -351,6 +367,13 @@ defmodule AttestoMCP.Plug.Authenticate do
     end
   end
 
+  defp policy_rejection_hook(opts) do
+    case Keyword.get(opts, :send_error) do
+      {Telemetry, :send_error, [host]} -> {Telemetry, :send_error, [host, :policy_rejected]}
+      host -> {Telemetry, :send_error, [host, :policy_rejected]}
+    end
+  end
+
   defp core_opts(opts, claims_key) do
     opts
     |> Keyword.drop([
@@ -369,6 +392,7 @@ defmodule AttestoMCP.Plug.Authenticate do
     |> Keyword.put_new(:bearer_methods, [:header])
     |> Keyword.put(:claims_key, claims_key)
     |> put_oauth_error_metadata(opts)
+    |> Telemetry.wrap_send_error()
   end
 
   defp put_oauth_error_metadata(core_opts, opts) do

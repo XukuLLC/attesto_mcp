@@ -106,7 +106,7 @@ defmodule AttestoMCP.Plug.RequireScopesTest do
              claims_key: :attesto_mcp_claims,
              required: [^scope],
              scopes_key: :attesto_mcp_scopes,
-             transport: []
+             transport: [send_error: {AttestoMCP.Telemetry, :send_error, [nil]}]
            } = RequireScopes.init([scope])
   end
 

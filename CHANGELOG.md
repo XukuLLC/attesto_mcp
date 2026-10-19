@@ -5,6 +5,30 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [Unreleased]
+
+### Added
+
+- `AttestoMCP.Telemetry`: the `[:attesto_mcp, :authenticate]` span around
+  every `AttestoMCP.Plug.Authenticate` call and the
+  `[:attesto_mcp, :require_scopes]` span around every scope decision. The
+  `:stop` metadata carries a bounded `:outcome` (for example
+  `:missing_credentials`, `:token_expired`, `:invalid_audience`,
+  `:sender_constraint_mismatch`, `:dpop_replay`, `:dpop_nonce_required`,
+  `:step_up_required`, `:policy_rejected`, `:insufficient_scope`,
+  `:verifier_unavailable`), the refusal's HTTP `:status`, and the
+  authenticated `:binding`; an `:exception` event carries only the kind.
+  The outcome is also recorded under `conn.private[:attesto_mcp_auth_outcome]`
+  and read with `AttestoMCP.Telemetry.outcome/1`.
+
+### Changed
+
+- The plugs install their outcome-recording step as the core `:send_error`
+  hook and call the host's own hook from it, so a host hook still renders
+  every refusal. `init/1` output now carries that wrapper in place of the raw
+  hook.
+- Depend on `telemetry ~> 1.0` directly.
+
 ## [2.1.2] - 2026-10-18
 
 ### Changed

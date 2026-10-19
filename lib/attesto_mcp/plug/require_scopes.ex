@@ -22,6 +22,9 @@ defmodule AttestoMCP.Plug.RequireScopes do
   granted-scope list; that is why it is a thin wrapper over the OAuthError
   renderer rather than a direct use of `Attesto.Plug.RequireScopes` (which reads
   the `scope` claim under its own key).
+
+  Every call is wrapped in the `[:attesto_mcp, :require_scopes]` telemetry
+  span described in `AttestoMCP.Telemetry`.
   """
 
   @behaviour Plug
@@ -29,6 +32,7 @@ defmodule AttestoMCP.Plug.RequireScopes do
   alias Attesto.Plug.OAuthError
   alias Attesto.Scope
   alias AttestoMCP.Auth
+  alias AttestoMCP.Telemetry
 
   @claims_key :attesto_mcp_claims
   @scopes_key :attesto_mcp_scopes
@@ -62,18 +66,21 @@ defmodule AttestoMCP.Plug.RequireScopes do
       required: required,
       scopes_key: Keyword.get(keyword_opts, :scopes_key, @scopes_key),
       transport:
-        Keyword.take(keyword_opts, [
-          :send_error,
-          :www_authenticate,
-          :no_store,
-          :resource_metadata,
-          :allow_http
-        ])
+        keyword_opts
+        |> Keyword.take([:send_error, :www_authenticate, :no_store, :resource_metadata, :allow_http])
+        |> Telemetry.wrap_send_error()
     }
   end
 
   @impl Plug
   def call(conn, opts) do
+    Telemetry.span(:require_scopes, fn ->
+      conn = check(conn, opts)
+      {conn, Map.take(Telemetry.stop_metadata(conn), [:outcome, :status])}
+    end)
+  end
+
+  defp check(conn, opts) do
     granted = Map.get(conn.assigns, opts.scopes_key)
 
     cond do

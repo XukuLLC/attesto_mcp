@@ -381,6 +381,32 @@ If the server requires DPoP nonces, also pass `:nonce_check` and `:nonce_issue`.
 Nonce failures produce `use_dpop_nonce` with a fresh `DPoP-Nonce` header so the
 client can retry.
 
+## Telemetry
+
+Every `AttestoMCP.Plug.Authenticate` call (and so every
+`AttestoMCP.Plug.ProtectResource` authentication) runs inside the
+`[:attesto_mcp, :authenticate]` telemetry span, and every
+`AttestoMCP.Plug.RequireScopes` decision inside `[:attesto_mcp, :require_scopes]`.
+The `:stop` event's `:outcome` is one atom from a bounded set, such as
+`:missing_credentials`, `:token_expired`, `:invalid_audience`,
+`:sender_constraint_mismatch`, `:dpop_replay`, `:insufficient_scope`, or
+`:verifier_unavailable`, with the refusal's HTTP `:status` and, for an
+authenticated request, its `:binding`. Tokens, claims, principals, scopes, and
+error descriptions never enter the metadata. `AttestoMCP.Telemetry` lists the
+events and outcomes; `AttestoMCP.Telemetry.outcome/1` reads the recorded
+outcome off a connection.
+
+```elixir
+:telemetry.attach(
+  "mcp-auth-outcomes",
+  [:attesto_mcp, :authenticate, :stop],
+  fn _event, %{duration: duration}, %{outcome: outcome}, _config ->
+    MyApp.Metrics.observe(:mcp_authentication, duration, outcome: outcome)
+  end,
+  nil
+)
+```
+
 ## Optional Anubis compatibility
 
 New Attesto-native servers should use
