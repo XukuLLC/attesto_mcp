@@ -21,8 +21,8 @@ defmodule AttestoMCP.DependencyRequirementsTest do
   end
 
   test "JOSE admits the patched floor and rejects the next major" do
-    assert_matches(requirement!(:jose), ~w(1.11.12 1.99.0))
-    refute_matches(requirement!(:jose), ~w(1.11.11 2.0.0))
+    assert_matches(requirement!(:jose), ~w(1.11.13 1.99.0))
+    refute_matches(requirement!(:jose), ~w(1.11.12 2.0.0))
   end
 
   test "Attesto uses the hardened-core floor and Postgrex uses its patched floor" do

@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "2.2.0"
+  @version "2.2.1"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -48,7 +48,7 @@ defmodule AttestoMCP.MixProject do
     [
       attesto_dep(),
       # Required because the shipped public test helpers call JOSE directly.
-      {:jose, ">= 1.11.12 and < 2.0.0"},
+      {:jose, ">= 1.11.13 and < 2.0.0"},
       {:plug, "~> 1.16.6 or ~> 1.17.4 or ~> 1.18.5 or ~> 1.19.5 or >= 1.20.3 and < 2.0.0"},
       {:telemetry, "~> 1.0"},
 

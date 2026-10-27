@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.2.1] - 2026-10-27
+
+### Security
+
+- Require JOSE 1.11.13 or later, which fixes CVE-2026-65625 through
+  CVE-2026-65632. AttestoMCP verifies bearer and DPoP-bound tokens through
+  Attesto, which with earlier JOSE releases accepted ECDSA signatures padded
+  with leading zero bytes.
+
 ## [2.2.0] - 2026-10-19
 
 ### Added
