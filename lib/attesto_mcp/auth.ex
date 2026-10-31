@@ -1,5 +1,10 @@
 defmodule AttestoMCP.Auth do
-  @moduledoc false
+  @moduledoc """
+  Internal authentication helpers shared by `AttestoMCP` plugs.
+
+  For `{module, fun, extra}` callback tuples, `invoke/2` **appends** `extra`
+  after the per-call `args` (`apply(module, fun, args ++ extra)`).
+  """
 
   alias Attesto.Scope
 

@@ -52,8 +52,13 @@ defmodule AttestoMCP.Plug.Authenticate do
       malformed result fails authentication and never disables confinement.
       The `:resource` form requires a valid pinned `:base_url` or `:origin` at
       initialization so the request `Host` cannot choose the audience.
-    * `:principal` - optional callback that receives verified claims and sender
-      context, returning `{:ok, principal}` or `{:error, reason}`.
+    * `:principal` - optional callback (`(claims, sender -> ...)` or
+      `{module, fun}` / `{module, fun, extra_args}`) that receives verified
+      claims and sender context, returning `{:ok, principal}` or
+      `{:error, reason}`. For `{module, fun, extra_args}` callbacks (`:principal`,
+      `:resource_audience`, `:resource_metadata_url`), `AttestoMCP.Auth.invoke/2`
+      **appends** `extra_args` after the per-call arguments
+      (`apply(module, fun, call_args ++ extra_args)`).
     * `:resource_metadata_url` - URL string, `(conn -> url)` callback, or
       `{module, fun}` / `{module, fun, args}` tuple that appends an RFC 9728
       `resource_metadata` auth-param to `WWW-Authenticate` challenges unless a

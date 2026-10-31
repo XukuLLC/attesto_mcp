@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.2.2] - 2026-10-31
+
+### Changed
+
+- Document the MFA callback argument-ordering convention (`{module, function, extra_args}`
+  appends runtime arguments after `extra_args`) in `AttestoMCP.Auth` and
+  `AttestoMCP.Plug.Authenticate`.
+
 ## [2.2.1] - 2026-10-27
 
 ### Security

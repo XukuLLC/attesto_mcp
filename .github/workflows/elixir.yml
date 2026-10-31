@@ -22,7 +22,7 @@ jobs:
         uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
           elixir-version: "1.18.4"
-          otp-version: "28.0"
+          otp-version: "28.5.0.8"
 
       - name: Install Hex and Rebar
         run: |
@@ -71,7 +71,7 @@ jobs:
         uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
           elixir-version: "1.18.4"
-          otp-version: "28.0"
+          otp-version: "28.5.0.8"
 
       - name: Install dependencies
         run: |
@@ -97,9 +97,9 @@ jobs:
       matrix:
         include:
           - elixir: "1.18.4"
-            otp: "28.0"
+            otp: "28.5.0.8"
           - elixir: "1.19.4"
-            otp: "28.3"
+            otp: "28.5.0.8"
             lint: true
 
     services:
@@ -194,7 +194,7 @@ jobs:
         uses: erlef/setup-beam@54075bcc5e249e4758d363f27d099f55d843f124 # v1.24.1
         with:
           elixir-version: "1.19.4"
-          otp-version: "28.3"
+          otp-version: "28.5.0.8"
 
       - name: Resolve published Attesto 2
         run: |
