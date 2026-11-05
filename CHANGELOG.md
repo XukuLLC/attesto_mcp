@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.2.3] - 2026-11-05
+
+### Security
+
+- Require Attesto `>= 2.11.0 and < 3.0.0`. The MCP boundary verifies access
+  tokens through Attesto, whose earlier releases could accept a `"cnf": null`
+  access token as an unbound bearer token under the Jason or Poison JOSE
+  backend.
+
 ## [2.2.2] - 2026-10-31
 
 ### Changed

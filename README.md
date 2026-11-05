@@ -528,9 +528,9 @@ required. Pin to `~> 2.2` for the current security boundary.
 
 ## Security notes
 
-- Deploy AttestoMCP 2.2.0 with Attesto 2.6.1 or later in the 2.x line. This
-  floor supplies the shared protected-resource metadata and strict URI policy
-  used directly by the MCP boundary.
+- Deploy AttestoMCP 2.2.3 with Attesto 2.11.0 or later in the 2.x line. This
+  floor supplies the shared protected-resource metadata, strict URI policy, and
+  null-aware confirmation checks used directly by the MCP boundary.
 - Use HTTPS for HTTP MCP servers.
 - Validate token audience/resource identifiers for the exact MCP endpoint. When
   one server fronts more than one resource, enable `resource_audience: :resource`
