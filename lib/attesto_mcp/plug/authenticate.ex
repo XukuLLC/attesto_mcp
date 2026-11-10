@@ -25,6 +25,8 @@ defmodule AttestoMCP.Plug.Authenticate do
   `:replay_check`, `:nonce_check`, `:nonce_issue`, `:cert_der`,
   `:trusted_audiences`, `:htu`, `:credential_from_conn`, `:bearer_methods`,
   `:send_error`, `:www_authenticate`, and `:no_store`, are passed through.
+  `:origin` is this plug's own option (see below) and is not passed to core
+  as core's `:origin`; a pinned origin reaches core as the DPoP `:htu`.
 
   MCP defaults to `bearer_methods: [:header]`, matching protected-resource
   metadata that advertises `bearer_methods_supported: ["header"]`. A host that
@@ -74,16 +76,51 @@ defmodule AttestoMCP.Plug.Authenticate do
     * `:resource_path` - MCP endpoint path used to derive
       `:resource_metadata_url`. Its origin is resolved by
       `AttestoMCP.Metadata.resolve_origin/2`, so a pinned origin applies.
-    * `:base_url` / `:origin` - pin the origin of the derived
-      `resource_metadata` challenge URL (a `String.t()` or `(conn -> url)`),
-      instead of deriving it from the request connection. Use behind a
-      TLS-terminating proxy so the advertised metadata URL cannot be spoofed
-      via `X-Forwarded-*`. When omitted, the live request origin is used. This
-      origin is the resource server's own; it is independent of the `:config`
-      issuer (the authorization server). The option is mandatory when
+    * `:base_url` / `:origin` - the external origin clients address this
+      resource by (a `String.t()`, a `(conn -> url)` callback, or a
+      `{module, fun}` / `{module, fun, args}` tuple). It pins the origin of the
+      derived `resource_metadata` challenge URL, the `resource_audience:
+      :resource` identifier, and the DPoP target URI (see below), instead of
+      deriving them from the request connection. Use it behind a
+      TLS-terminating proxy and on any server that answers more than one
+      `Host`. When omitted, the live request origin is used. This origin is the
+      resource server's own; it is independent of the `:config` issuer (the
+      authorization server). The option is mandatory when
       `resource_audience: :resource` is enabled.
     * `:allow_http` - permit an HTTP `resource_metadata` URL for a deliberate
       development endpoint. HTTPS remains the default.
+
+  ## DPoP target URI
+
+  RFC 9449 §4.3 binds a DPoP proof to the URI of the request it was made for
+  (`htu`), so a proof sent to one server cannot be replayed to another. The URI
+  a proof must sign is chosen in this order:
+
+    1. an explicit `:htu` callback, passed to `Attesto.Plug.Authenticate`
+       unchanged;
+    2. with `:base_url` or `:origin` pinned, the resolved origin followed by
+       `conn.request_path` (`dpop_target_uri/2`). The request's scheme, `Host`
+       header, and port are not used. A pinned value with a path prefix
+       (`"https://example.com/tools"`) assumes the proxy strips that prefix,
+       so the application sees `/mcp` for an external `/tools/mcp`;
+    3. otherwise Attesto core's default, built from `conn.scheme`,
+       `conn.host`, and `conn.port`. `conn.host` comes from the request `Host`
+       header, so a server that answers any `Host` then accepts a proof made
+       for another server when the sender names that server in `Host`.
+
+  Pin `:base_url` (or `:origin`) on every endpoint that accepts DPoP-bound
+  tokens:
+
+      plug AttestoMCP.Plug.ProtectResource,
+        config: &MyApp.Attesto.config/0,
+        replay_check: &MyApp.DPoPReplay.check_and_record/2,
+        resource_path: "/mcp",
+        scopes: [AttestoMCP.Scopes.tools_call()],
+        base_url: "https://mcp.example.com"
+
+  Use `:htu` instead when one endpoint answers on several origins, or when a
+  proxy rewrites the path in a way a prefix does not describe. Build it from
+  configured origins, not from request headers.
   """
 
   @behaviour Plug
@@ -139,10 +176,15 @@ defmodule AttestoMCP.Plug.Authenticate do
     sender_key = Keyword.get(opts, :sender_key, @sender_key)
 
     Telemetry.span(:authenticate, fn ->
+      core =
+        opts
+        |> put_resource_audience(conn, opts)
+        |> put_pinned_htu(opts)
+
       conn =
         conn
         |> Telemetry.put_outcome(nil)
-        |> AttestoAuthenticate.call(put_resource_audience(opts, conn, opts))
+        |> AttestoAuthenticate.call(core)
 
       conn = if conn.halted, do: conn, else: assign_context(conn, opts, claims_key)
       {conn, Telemetry.stop_metadata(conn, sender_key)}
@@ -163,6 +205,46 @@ defmodule AttestoMCP.Plug.Authenticate do
       false -> core
       policy -> Keyword.put(core, :trusted_audiences, [resolve_resource_audience(policy, conn, opts)])
     end
+  end
+
+  # RFC 9449 §4.3: a DPoP proof is bound to the URI of the request it was made
+  # for. Attesto core builds that URI from the request scheme, `Host` header,
+  # and port unless it is given `:htu`, so a server that answers any `Host`
+  # would accept a proof made for another server. A pinned `:base_url` /
+  # `:origin` is the origin clients address this resource by, so it also fixes
+  # the URI a proof must sign. The callback is built per request rather than in
+  # `init/1`, which must stay escape-safe for compile-time pipelines, and it is
+  # passed as `:htu` because every Attesto core this package supports accepts
+  # that option (core `:origin` cannot carry a callback, an `http` development
+  # origin, or a path prefix). A host-supplied `:htu` is left in place.
+  defp put_pinned_htu(core, opts) do
+    if is_nil(Keyword.get(opts, :htu)) and origin_pinned?(opts) do
+      Keyword.put(core, :htu, &dpop_target_uri(&1, opts))
+    else
+      core
+    end
+  end
+
+  defp origin_pinned?(opts), do: Enum.any?([:base_url, :origin], &Keyword.has_key?(opts, &1))
+
+  @doc """
+  Returns the DPoP target URI (`htu`) a proof must sign for `conn` when the
+  plug is configured with `opts` and no `:htu`: the origin resolved by
+  `AttestoMCP.Metadata.resolve_origin/2` followed by `conn.request_path`.
+
+  With a pinned `:base_url` or `:origin`, the request's scheme, `Host` header,
+  and port do not affect the result. A pinned value carrying a path prefix is
+  joined with `conn.request_path`, which matches a proxy that strips that
+  prefix before the request reaches the application. Without a pin, the
+  resolved origin is the request's own.
+
+      iex> conn = Plug.Test.conn(:post, "http://10.0.0.5:4000/mcp")
+      iex> AttestoMCP.Plug.Authenticate.dpop_target_uri(conn, base_url: "https://mcp.example.com")
+      "https://mcp.example.com/mcp"
+  """
+  @spec dpop_target_uri(Plug.Conn.t(), keyword()) :: String.t()
+  def dpop_target_uri(%Plug.Conn{} = conn, opts) when is_list(opts) do
+    Metadata.resolve_origin(conn, opts) <> conn.request_path
   end
 
   defp validate_audience_policy!(opts) do
@@ -379,6 +461,11 @@ defmodule AttestoMCP.Plug.Authenticate do
     end
   end
 
+  # `:origin` is dropped along with the other MCP-only keys even though core
+  # has an option of the same name: the MCP form also accepts callbacks, an
+  # `http` origin under `:allow_http`, and a path prefix, none of which core's
+  # `:origin` takes. The pinned origin reaches core as an `:htu` callback in
+  # `call/2` instead.
   defp core_opts(opts, claims_key) do
     opts
     |> Keyword.drop([

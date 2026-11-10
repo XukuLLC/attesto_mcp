@@ -497,6 +497,47 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/brokers")
   end
 
+  test "a pinned :base_url fixes the DPoP target URI over the request host", %{config: config} do
+    # The installer's form: a literal base_url with the route-derived audience
+    # and no :htu.
+    jwk = Factory.dpop_jwk()
+
+    token =
+      Factory.access_token(config,
+        audience: "https://mcp.example/mcp",
+        dpop_jkt: Factory.dpop_jkt(jwk),
+        scopes: [Scopes.tools_call()]
+      )
+
+    protection =
+      ProtectResource.init(
+        config: config,
+        replay_check: DPoPReplay.callback(),
+        scopes: [Scopes.tools_call()],
+        resource_path: "/mcp",
+        base_url: "https://mcp.example",
+        resource_audience: :resource
+      )
+
+    request = fn url, htu ->
+      {proof, _jkt} = Factory.dpop_proof(token, jwk: jwk, htu: htu)
+
+      :post
+      |> conn(url)
+      |> put_req_header("authorization", "DPoP " <> token)
+      |> put_req_header("dpop", proof)
+      |> ProtectResource.call(protection)
+    end
+
+    refused = request.("https://other.example/mcp", "https://other.example/mcp")
+    assert refused.status == 401
+    assert JSON.decode!(refused.resp_body)["error"] == "invalid_dpop_proof"
+
+    accepted = request.("http://10.0.0.5/mcp", "https://mcp.example/mcp")
+    refute accepted.halted
+    assert accepted.assigns.attesto_mcp_sender.binding == :dpop
+  end
+
   test "an insufficient_scope 403 carries the resource_metadata pointer when the resource is pinned", %{
     config: config
   } do

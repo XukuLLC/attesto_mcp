@@ -11,8 +11,133 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
   alias AttestoMCP.Test.DPoPReplay
   alias AttestoMCP.Test.Factory
 
+  doctest Authenticate, only: [dpop_target_uri: 2]
+
   setup do
     %{config: Factory.config()}
+  end
+
+  describe "DPoP target URI with a pinned origin" do
+    setup %{config: config} do
+      jwk = Factory.dpop_jwk()
+      %{jwk: jwk, token: Factory.access_token(config, dpop_jkt: Factory.dpop_jkt(jwk))}
+    end
+
+    test "refuses a proof made for the server named in the request Host", %{
+      config: config,
+      jwk: jwk,
+      token: token
+    } do
+      conn =
+        "https://other.example/mcp"
+        |> dpop_request(token, jwk, "https://other.example/mcp")
+        |> pinned_authenticate(config, base_url: "https://mcp.example")
+
+      assert_dpop_refused(conn)
+    end
+
+    test "accepts a proof for the pinned origin when the request Host differs", %{
+      config: config,
+      jwk: jwk,
+      token: token
+    } do
+      conn =
+        "http://other.example:4000/mcp"
+        |> dpop_request(token, jwk, "https://mcp.example/mcp")
+        |> pinned_authenticate(config, base_url: "https://mcp.example")
+
+      refute conn.halted
+      assert conn.assigns.attesto_mcp_sender == %{binding: :dpop, jkt: Factory.dpop_jkt(jwk)}
+    end
+
+    test "pins the target URI from an :origin callback", %{config: config, jwk: jwk, token: token} do
+      opts = [origin: {__MODULE__, :pinned_origin}]
+
+      refused =
+        "https://other.example/mcp"
+        |> dpop_request(token, jwk, "https://other.example/mcp")
+        |> pinned_authenticate(config, opts)
+
+      assert_dpop_refused(refused)
+
+      accepted =
+        "https://other.example/mcp"
+        |> dpop_request(token, jwk, "https://mcp.example/mcp")
+        |> pinned_authenticate(config, opts)
+
+      refute accepted.halted
+    end
+
+    test "joins a path-prefixed base_url with the request path", %{config: config, jwk: jwk, token: token} do
+      opts = [base_url: "https://mcp.example/tools"]
+
+      refused =
+        "https://other.example/mcp"
+        |> dpop_request(token, jwk, "https://other.example/mcp")
+        |> pinned_authenticate(config, opts)
+
+      assert_dpop_refused(refused)
+
+      accepted =
+        "http://10.0.0.5/mcp"
+        |> dpop_request(token, jwk, "https://mcp.example/tools/mcp")
+        |> pinned_authenticate(config, opts)
+
+      refute accepted.halted
+    end
+
+    test "resolves an http development origin only under allow_http" do
+      request = conn(:post, "http://127.0.0.1:4000/mcp")
+
+      assert Authenticate.dpop_target_uri(request, base_url: "http://localhost:4000", allow_http: true) ==
+               "http://localhost:4000/mcp"
+
+      assert_raise ArgumentError, ~r/:base_url/, fn ->
+        Authenticate.dpop_target_uri(request, base_url: "http://localhost:4000")
+      end
+    end
+
+    test "an explicit :htu takes precedence over the pinned origin", %{config: config, jwk: jwk, token: token} do
+      opts = [base_url: "https://mcp.example", htu: &Factory.htu/1]
+
+      refused =
+        "https://mcp.example/mcp"
+        |> dpop_request(token, jwk, "https://mcp.example/mcp")
+        |> pinned_authenticate(config, opts)
+
+      assert_dpop_refused(refused)
+
+      accepted =
+        "https://mcp.example/mcp"
+        |> dpop_request(token, jwk, Factory.htu())
+        |> pinned_authenticate(config, opts)
+
+      refute accepted.halted
+    end
+  end
+
+  def pinned_origin(_conn), do: "https://mcp.example"
+
+  defp dpop_request(url, token, jwk, htu) do
+    {proof, _jkt} = Factory.dpop_proof(token, jwk: jwk, htu: htu)
+
+    # Plug.Test takes the request host (the `Host` header) from the URL.
+    :post
+    |> conn(url)
+    |> put_req_header("authorization", "DPoP " <> token)
+    |> put_req_header("dpop", proof)
+  end
+
+  defp pinned_authenticate(conn, config, opts) do
+    opts = Keyword.merge([config: config, replay_check: DPoPReplay.callback()], opts)
+    Authenticate.call(conn, Authenticate.init(opts))
+  end
+
+  defp assert_dpop_refused(conn) do
+    assert conn.halted
+    assert conn.status == 401
+    assert JSON.decode!(conn.resp_body)["error"] == "invalid_dpop_proof"
+    assert ["DPoP " <> _] = get_resp_header(conn, "www-authenticate")
   end
 
   test "bearer token is accepted when unbound", %{config: config} do

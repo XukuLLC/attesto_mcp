@@ -89,6 +89,28 @@ With the origin pinned you do **not** need a bespoke canonical-host guard plug i
 front of the metadata routes: a spoofed `Host`/`X-Forwarded-Host` can no longer
 change the advertised `resource`, challenge URL, or `authorization_servers`.
 
+### The DPoP target URI
+
+The same pin fixes the URI a DPoP proof must sign (`htu`, RFC 9449 §4.3). On
+`AttestoMCP.Plug.ProtectResource` and `AttestoMCP.Plug.Authenticate`, a pinned
+`:base_url`/`:origin` makes the `htu` the resolved origin followed by
+`conn.request_path`. The request's scheme, `Host`, and port are not consulted,
+so a proof made for another server is refused even when the sender puts that
+server's name in `Host`, and a proof for the canonical URL verifies even though
+the proxy forwarded the request over plain HTTP to an internal name.
+
+| Configuration | DPoP `htu` |
+| --- | --- |
+| explicit `:htu` callback | whatever the callback returns |
+| `:base_url`/`:origin` pinned, no `:htu` | pinned origin + `conn.request_path` |
+| neither | `conn.scheme`://`conn.host`:`conn.port` + `conn.request_path` (follows the request `Host`) |
+
+A pinned value with a path prefix (`"https://example.com/tools"`) is joined
+with `conn.request_path`, which is correct for a proxy that strips the prefix
+before forwarding. When the application sees the full external path, keep the
+prefix in `:resource_path` and pin the bare origin. Use an explicit `:htu`
+when one endpoint answers on several origins.
+
 ### Using a callback
 
 When the canonical origin is computed (multi-tenant, per-deployment config),

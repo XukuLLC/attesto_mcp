@@ -205,7 +205,7 @@ you use:
 pipeline :mcp_auth do
   plug AttestoMCP.Plug.Authenticate,
     config: &MyApp.Attesto.config/0,
-    htu: fn _conn -> "https://mcp.example.com/mcp" end,
+    base_url: "https://mcp.example.com",
     replay_check: &MyApp.DPoPReplay.check_and_record/2,
     resource_path: "/mcp",
     principal: fn claims, sender ->
@@ -384,6 +384,15 @@ with Attesto's lower-level option.
 If the server requires DPoP nonces, also pass `:nonce_check` and `:nonce_issue`.
 Nonce failures produce `use_dpop_nonce` with a fresh `DPoP-Nonce` header so the
 client can retry.
+
+A DPoP proof signs the URI of the request it was made for (`htu`, RFC 9449
+§4.3). With `:base_url` or `:origin` pinned, that URI is the pinned origin
+followed by the request path, whatever the request's scheme, `Host` header, or
+port. Without a pin and without an explicit `:htu`, Attesto builds it from the
+request, so a server that answers more than one `Host` accepts a proof made for
+another server. Pin `:base_url` on every endpoint that accepts DPoP-bound
+tokens, or pass `:htu` when one endpoint answers on several origins. See "DPoP
+target URI" in `AttestoMCP.Plug.Authenticate`.
 
 ## Telemetry
 

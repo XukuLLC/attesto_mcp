@@ -16,7 +16,8 @@ defmodule AttestoMCP.Plug.ProtectResource do
         config: &MyApp.Attesto.config/0,
         replay_check: &MyApp.DPoPReplay.check_and_record/2,
         resource_path: "/mcp",
-        scopes: [AttestoMCP.Scopes.tools_call()]
+        scopes: [AttestoMCP.Scopes.tools_call()],
+        base_url: "https://mcp.example.com"
 
   `init/1` returns no closures, so the plug works as a compile-time router
   pipeline plug (`plug_init_mode: :compile`, the production default). As Plug
@@ -29,7 +30,8 @@ defmodule AttestoMCP.Plug.ProtectResource do
       plug AttestoMCP.Plug.Authenticate,
         config: &MyApp.Attesto.config/0,
         replay_check: &MyApp.DPoPReplay.check_and_record/2,
-        resource_path: "/mcp"
+        resource_path: "/mcp",
+        base_url: "https://mcp.example.com"
 
       plug AttestoMCP.Plug.RequireScopes,
         scopes: [AttestoMCP.Scopes.tools_call()]
@@ -86,12 +88,17 @@ defmodule AttestoMCP.Plug.ProtectResource do
       auth-param appended to `WWW-Authenticate` challenges. The former
       `:resource` path alias is deprecated because metadata uses `:resource`
       for an absolute RFC 9728 resource identifier.
-    * `:base_url` (or `:origin`) - pin the origin of the `resource_metadata`
-      challenge URL behind a TLS-terminating proxy (a `String.t()` or
-      `(conn -> url)`), instead of trusting the request authority. It is
-      required with `resource_audience: :resource`. Invalid literals fail at
-      initialization and invalid callback results fail at request time. See
-      `guides/proxy_origin.md`.
+    * `:base_url` (or `:origin`) - the external origin clients address this
+      resource by (a `String.t()` or `(conn -> url)`), instead of trusting the
+      request authority. It pins the `resource_metadata` challenge URL, the
+      `resource_audience: :resource` identifier, and the DPoP target URI
+      (`htu`) a proof must sign: the pinned origin followed by
+      `conn.request_path`, unless an explicit `:htu` is given. Set it on every
+      endpoint that accepts DPoP-bound tokens; without it the `htu` follows the
+      request `Host` header. It is required with `resource_audience:
+      :resource`. Invalid literals fail at initialization and invalid callback
+      results fail at request time. See "DPoP target URI" in
+      `AttestoMCP.Plug.Authenticate` and `guides/proxy_origin.md`.
     * `:allow_http` - permit an HTTP `resource_metadata` URL for a deliberate
       development endpoint. HTTPS remains the default.
     * `:resource_audience` - confines access tokens to this protected resource;

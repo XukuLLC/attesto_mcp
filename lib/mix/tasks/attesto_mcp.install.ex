@@ -59,8 +59,9 @@ defmodule Mix.Tasks.AttestoMcp.Install.Docs do
     * `--base-url` - required canonical HTTPS origin of the protected resource,
       for example `https://mcp.example.com`. It is emitted into both the
       authentication pipeline and metadata route so the request `Host` cannot
-      select the accepted token audience. Path prefixes are permitted; query,
-      fragment, and userinfo are rejected.
+      select the accepted token audience or the DPoP target URI a proof must
+      sign. Path prefixes are permitted; query, fragment, and userinfo are
+      rejected.
     * `--resource-path` - the path component of the protected resource being
       served, for example `/mcp` (RFC 9728 Section 3.1). The metadata endpoint is
       mounted at `/.well-known/oauth-protected-resource<resource-path>` and the
@@ -155,7 +156,8 @@ if Code.ensure_loaded?(Igniter) do
           AttestoMCP.Plug.ProtectResource using #{inspect(config_mfa)}.
 
           The canonical resource origin is pinned to #{inspect(base_url)} in both
-          metadata and protection. The metadata document advertises the issuer
+          metadata and protection, including the DPoP target URI a proof must
+          sign. The metadata document advertises the issuer
           returned by #{inspect(config_mfa)} as its authorization server.
 
           Next steps:
