@@ -203,12 +203,15 @@ if Code.ensure_loaded?(Igniter) do
       )
     end
 
+    # No `plug :accepts` here: MCP clients open the server-to-client stream
+    # with `GET` and `Accept: text/event-stream`, which Phoenix maps to no
+    # format by default, so `:accepts` would answer it with 406 before
+    # authentication. The MCP transport negotiates the media type itself.
     defp add_protect_pipeline(igniter, router, pipeline_name, resource_path, scopes, config_mfa, base_url) do
       Phoenix.add_pipeline(
         igniter,
         pipeline_name,
         """
-        plug :accepts, ["json"]
         plug AttestoMCP.Plug.ProtectResource,
           config: #{inspect(config_mfa)},
           scopes: #{inspect(scopes)},

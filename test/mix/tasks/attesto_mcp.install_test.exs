@@ -10,6 +10,17 @@ defmodule AttestoMCP.InstallerTestConfig do
   def alternate_config, do: config()
 end
 
+defmodule Mix.Tasks.AttestoMcp.InstallTest.Transport do
+  @moduledoc false
+  @behaviour Plug
+
+  @impl Plug
+  def init(opts), do: opts
+
+  @impl Plug
+  def call(conn, _opts), do: Plug.Conn.send_resp(conn, 200, "transport")
+end
+
 defmodule Mix.Tasks.AttestoMcp.InstallTest do
   # Module name is `AttestoMcp` (not `AttestoMCP`) so the test module mirrors the
   # task module Mix resolves; see the note on Mix.Tasks.AttestoMcp.Install.
@@ -101,6 +112,57 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
         |> ProtectResource.call(protection)
 
       refute conn.halted, "generated protection halted: #{conn.status} #{conn.resp_body}"
+    end
+
+    test "the generated pipeline lets the SSE GET reach authentication and the transport" do
+      source =
+        phx_test_project()
+        |> Igniter.compose_task("attesto_mcp.install", @argv)
+        |> apply_igniter!()
+        |> router_source()
+
+      [pipeline, pipeline_name] =
+        Regex.run(~r/^  pipeline :(mcp_protected_\w+) do\n.*?^  end$/ms, source)
+
+      router = Module.concat(__MODULE__, "GeneratedRouter#{System.unique_integer([:positive])}")
+
+      Code.compile_string("""
+      defmodule #{inspect(router)} do
+        use Phoenix.Router
+
+      #{pipeline}
+
+        scope "/" do
+          pipe_through :#{pipeline_name}
+          forward "/mcp", #{inspect(__MODULE__.Transport)}
+        end
+      end
+      """)
+
+      call = fn method, accept, token ->
+        conn = method |> conn("https://mcp.example.com/mcp") |> put_req_header("accept", accept)
+        conn = if token, do: put_req_header(conn, "authorization", "Bearer " <> token), else: conn
+        router.call(conn, router.init([]))
+      end
+
+      challenged = call.(:get, "text/event-stream", nil)
+      assert challenged.status == 401
+      assert [challenge] = get_resp_header(challenged, "www-authenticate")
+      assert challenge =~ "resource_metadata="
+
+      token =
+        Factory.access_token(InstallerTestConfig.config(),
+          audience: "https://mcp.example.com/mcp",
+          scopes: ["mcp:use"]
+        )
+
+      for {method, accept} <- [
+            {:get, "text/event-stream"},
+            {:post, "application/json, text/event-stream"}
+          ] do
+        reached = call.(method, accept, token)
+        assert {reached.status, reached.resp_body} == {200, "transport"}
+      end
     end
 
     test "missing or malformed config options stop before router mutation" do

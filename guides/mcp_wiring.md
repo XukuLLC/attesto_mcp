@@ -136,8 +136,6 @@ given is the same path mounted for discovery above, so the
 
 ```elixir
 pipeline :mcp do
-  plug :accepts, ["json", "sse"]
-
   plug AttestoMCP.Plug.ProtectResource,
     config: &MyApp.Attesto.config/0,
     replay_check: &MyApp.DPoPReplay.check_and_record/2,
@@ -156,6 +154,12 @@ scope "/" do
   forward "/mcp", MyApp.MCPServerPlug
 end
 ```
+
+The protection pipeline has no `plug :accepts`. MCP clients open the
+server-to-client stream with `GET` and `Accept: text/event-stream`, which
+Phoenix maps to no format unless the host registers one with `:mime`, so
+`:accepts` would answer that request with 406 before authentication. The MCP
+transport negotiates the media type itself.
 
 The metadata declaration and protection pipeline must use the same resource
 path, scopes, and origin. `resource_audience: :resource` makes that identifier
@@ -203,8 +207,6 @@ Protect the resources with matching paths, origins, and scope lists:
 
 ```elixir
 pipeline :mcp_alpha do
-  plug :accepts, ["json", "sse"]
-
   plug AttestoMCP.Plug.ProtectResource,
     config: &MyApp.Attesto.resource_config/0,
     resource_path: "/mcp/alpha",
@@ -214,8 +216,6 @@ pipeline :mcp_alpha do
 end
 
 pipeline :mcp_beta do
-  plug :accepts, ["json", "sse"]
-
   plug AttestoMCP.Plug.ProtectResource,
     config: &MyApp.Attesto.resource_config/0,
     resource_path: "/mcp/beta",
