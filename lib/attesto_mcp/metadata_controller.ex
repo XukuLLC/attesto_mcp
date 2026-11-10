@@ -18,6 +18,11 @@ if Code.ensure_loaded?(Phoenix.Controller) do
     (with no pin they both derive from the request; behind a proxy pass the same
     `:base_url`/`:origin` to the router macro and the plug).
 
+    A document with a configured `:base_url`, `:origin`, or `:resource` is
+    served with `Cache-Control: public, max-age=3600`. A document whose
+    `resource` is derived from the request `Host` is served with
+    `Cache-Control: no-store`.
+
     The controller compiles only when Phoenix is available; Plug-only consumers
     do not pull it in.
     """
@@ -38,12 +43,21 @@ if Code.ensure_loaded?(Phoenix.Controller) do
 
       metadata = Metadata.protected_resource(conn, resource_path, metadata_opts(opts))
 
-      # The document carries no secrets and is identical for every caller, and
-      # RFC 9728 §3.1 permits caching it, so it is served with the same public
-      # one-hour policy as AttestoPhoenix's protected-resource metadata.
       conn
-      |> Plug.Conn.put_resp_header("cache-control", "public, max-age=#{@cache_max_age_seconds}")
+      |> Plug.Conn.put_resp_header("cache-control", cache_control(opts))
       |> json(metadata)
+    end
+
+    # With a configured `resource` or `:base_url`/`:origin`, the document
+    # carries no secrets and is identical for every caller, and RFC 9728 §3.1
+    # permits caching it, so it is served with the same public one-hour policy
+    # as AttestoPhoenix's protected-resource metadata. Without one, `resource`
+    # is built from the request `Host`, and a shared cache that does not key on
+    # that host would serve one caller's document to every other caller.
+    defp cache_control(opts) do
+      if Enum.any?([:resource, :base_url, :origin], &Keyword.has_key?(opts, &1)),
+        do: "public, max-age=#{@cache_max_age_seconds}",
+        else: "no-store"
     end
 
     # `:scopes` is the ergonomic name on the router macro; the RFC 9728 field is

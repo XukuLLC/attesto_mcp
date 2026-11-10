@@ -176,14 +176,30 @@ defmodule AttestoMCP.RouterTest do
     end
   end
 
-  test "serves protected-resource metadata with the public one-hour cache policy" do
-    conn =
-      "/.well-known/oauth-protected-resource/mcp/foo"
-      |> build_conn()
-      |> TestRouter.call(TestRouter.init([]))
+  test "serves pinned protected-resource metadata with the public one-hour cache policy" do
+    for path <- [
+          "/.well-known/oauth-protected-resource/mcp/pinned",
+          "/.well-known/oauth-protected-resource/mcp/tuple"
+        ] do
+      conn = path |> build_conn() |> TestRouter.call(TestRouter.init([]))
 
-    assert conn.status == 200
-    assert get_resp_header(conn, "cache-control") == ["public, max-age=3600"]
+      assert conn.status == 200
+      assert get_resp_header(conn, "cache-control") == ["public, max-age=3600"]
+    end
+  end
+
+  test "metadata built from the request Host is not stored by shared caches" do
+    for host <- ["mcp.example.com", "attacker.example.net"] do
+      conn =
+        :get
+        |> conn("https://#{host}/.well-known/oauth-protected-resource/mcp/foo")
+        |> put_req_header("accept", "application/json")
+        |> TestRouter.call(TestRouter.init([]))
+
+      assert conn.status == 200
+      assert JSON.decode!(conn.resp_body)["resource"] == "https://#{host}/mcp/foo"
+      assert get_resp_header(conn, "cache-control") == ["no-store"]
+    end
   end
 
   defp get_metadata(path) do

@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [Unreleased]
+
+### Security
+
+- Serve router-mounted protected-resource metadata with
+  `Cache-Control: no-store` when neither `:base_url`, `:origin` nor
+  `:resource` is configured. In that case `resource` is built from the request
+  `Host`, yet the document was served `public, max-age=3600` with no `Vary`, so
+  a shared cache that does not key on the forwarded host could store a
+  document carrying an attacker's host and serve it to every client for an
+  hour. Pinned metadata keeps the public one-hour policy.
+
 ## [2.2.3] - 2026-11-05
 
 ### Security

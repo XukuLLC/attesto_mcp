@@ -308,8 +308,12 @@ metadata =
 ```
 
 Router-mounted metadata requires `:config`, `:issuer`, or an explicit
-`:authorization_servers` list. The response carries `Cache-Control: no-store`;
-the request authority is never advertised as the authorization server.
+`:authorization_servers` list; the request authority is never advertised as the
+authorization server. With a pinned `:base_url`/`:origin` (or an explicit
+`:resource`) the response carries `Cache-Control: public, max-age=3600`.
+Without one, `resource` is built from the request `Host` and the response
+carries `Cache-Control: no-store`, so a shared cache cannot hand one caller's
+document to others.
 
 Authorization-server metadata belongs at the issuer:
 
