@@ -116,7 +116,7 @@ defmodule AttestoMCP.MixProject do
          not Enum.any?(System.argv(), &(&1 in ["hex.build", "hex.publish"])) do
       {:attesto, path: "../attesto", override: true}
     else
-      {:attesto, ">= 2.11.0 and < 3.0.0"}
+      {:attesto, ">= 2.13.0 and < 3.0.0"}
     end
   end
 

@@ -5,6 +5,30 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [Unreleased]
+
+Requires attesto >= 2.13.0.
+
+### Added
+
+- `AttestoMCP.Metadata.protected_resource/1` and `/3` accept `:authenticate`,
+  the option list given to `AttestoMCP.Plug.ProtectResource` or
+  `AttestoMCP.Plug.Authenticate`. With it, `dpop_signing_alg_values_supported`
+  is published only when those options can accept a DPoP request
+  (`Attesto.Plug.Authenticate.accepts_dpop?/1`): a `:replay_check`, or
+  `dpop_replay_unprotected_acknowledged?: true`. Without `:authenticate` the
+  default list is published as before. An explicit
+  `:dpop_signing_alg_values_supported` takes precedence either way.
+
+- `AttestoMCP.Metadata.protected_resource/1` and `/3` accept
+  `dpop_signing_alg_values_supported: false` (or `[]`) to leave that member
+  out of the protected-resource metadata. Until now the member was always
+  published with every DPoP algorithm Attesto verifies, so a resource that
+  accepts only Bearer tokens advertised DPoP, and an explicit `[]` was
+  published as an empty array, which RFC 9728 §3.2 does not allow
+  ("Parameters with zero values MUST be omitted from the response"). An
+  absent or `nil` option still publishes the default list.
+
 ## [2.3.0] - 2026-11-09
 
 ### Security

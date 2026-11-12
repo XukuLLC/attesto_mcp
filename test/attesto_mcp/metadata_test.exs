@@ -26,6 +26,66 @@ defmodule AttestoMCP.MetadataTest do
     assert metadata["tls_client_certificate_bound_access_tokens"] == true
   end
 
+  describe "dpop_signing_alg_values_supported" do
+    @base [resource: "https://mcp.example.com/mcp", authorization_servers: ["https://auth.example.com"]]
+
+    test "defaults to every DPoP algorithm Attesto verifies, also for nil" do
+      for opts <- [@base, @base ++ [dpop_signing_alg_values_supported: nil]] do
+        assert Metadata.protected_resource(opts)["dpop_signing_alg_values_supported"] ==
+                 Attesto.DPoP.allowed_algs()
+      end
+    end
+
+    test "an explicit list is published as given" do
+      metadata = Metadata.protected_resource(@base ++ [dpop_signing_alg_values_supported: ["ES256"]])
+
+      assert metadata["dpop_signing_alg_values_supported"] == ["ES256"]
+    end
+
+    test "false or [] leaves the member out for a Bearer-only resource (RFC 9728 §3.2)" do
+      for omit <- [false, []] do
+        metadata = Metadata.protected_resource(@base ++ [dpop_signing_alg_values_supported: omit])
+
+        refute Map.has_key?(metadata, "dpop_signing_alg_values_supported")
+        assert metadata["bearer_methods_supported"] == ["header"]
+      end
+    end
+
+    test "the conn-based form takes the same opt-out" do
+      conn = Plug.Test.conn(:get, "https://mcp.example.com/mcp")
+
+      metadata =
+        Metadata.protected_resource(conn, "/mcp",
+          authorization_servers: ["https://auth.example.com"],
+          dpop_signing_alg_values_supported: false
+        )
+
+      refute Map.has_key?(metadata, "dpop_signing_alg_values_supported")
+    end
+
+    test ":authenticate makes the default follow what the plug accepts" do
+      base = [resource: "https://mcp.example.com/mcp", authorization_servers: ["https://auth.example.com"]]
+      build = fn extra -> Metadata.protected_resource(base ++ extra) end
+
+      refute Map.has_key?(build.(authenticate: []), "dpop_signing_alg_values_supported")
+
+      replay_check = fn _key, _ttl -> :ok end
+
+      assert build.(authenticate: [replay_check: replay_check])["dpop_signing_alg_values_supported"] ==
+               Attesto.DPoP.allowed_algs()
+
+      assert build.(authenticate: [dpop_replay_unprotected_acknowledged?: true])[
+               "dpop_signing_alg_values_supported"
+             ] == Attesto.DPoP.allowed_algs()
+
+      # An explicit list wins over the derivation, and the option itself is
+      # never published.
+      explicit = build.(authenticate: [], dpop_signing_alg_values_supported: ["ES256"])
+      assert explicit["dpop_signing_alg_values_supported"] == ["ES256"]
+      refute Map.has_key?(explicit, "authenticate")
+    end
+  end
+
   test "protected resource metadata can be derived from a Plug connection" do
     conn = conn(:get, "https://mcp.example.com/.well-known/oauth-protected-resource/mcp/user")
 

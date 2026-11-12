@@ -43,6 +43,7 @@ defmodule AttestoMCP.Metadata do
   alias Attesto.Config
   alias Attesto.Discovery
   alias Attesto.DPoP
+  alias Attesto.Plug.Authenticate
   alias Attesto.ProtectedResourceMetadata
   alias Attesto.URI, as: AttestoURI
   alias AttestoMCP.Auth
@@ -65,6 +66,17 @@ defmodule AttestoMCP.Metadata do
   Common options include `:scopes_supported`, `:bearer_methods_supported`,
   `:dpop_signing_alg_values_supported`, and
   `:tls_client_certificate_bound_access_tokens`.
+
+  `:dpop_signing_alg_values_supported` defaults to every DPoP algorithm
+  Attesto verifies. A resource that accepts only Bearer tokens passes `false`
+  (or `[]`) to leave the member out of the document; RFC 9728 §3.2 does not
+  allow publishing it as an empty array.
+
+  Pass `:authenticate` with the option list given to
+  `AttestoMCP.Plug.ProtectResource` (or `AttestoMCP.Plug.Authenticate`) to have
+  that default follow the plug: when those options cannot accept a DPoP request
+  (`Attesto.Plug.Authenticate.accepts_dpop?/1`), the member is left out. An
+  explicit `:dpop_signing_alg_values_supported` takes precedence.
   """
   @spec protected_resource(keyword()) :: %{required(String.t()) => term()}
   def protected_resource(opts) when is_list(opts) do
@@ -75,7 +87,7 @@ defmodule AttestoMCP.Metadata do
 
     opts
     |> put_default(:bearer_methods_supported, ["header"])
-    |> put_default(:dpop_signing_alg_values_supported, DPoP.allowed_algs())
+    |> put_dpop_signing_algs()
     |> put_default(:scopes_supported, Scopes.all())
     |> ProtectedResourceMetadata.metadata()
   end
@@ -284,6 +296,30 @@ defmodule AttestoMCP.Metadata do
     case normalize_resource_path!(resource_path) do
       "/" -> @well_known_path
       path -> @well_known_path <> path
+    end
+  end
+
+  # An absent or `nil` option publishes every algorithm Attesto verifies. An
+  # explicit `false` or `[]` is the host saying this resource takes no DPoP
+  # proofs, so the member is left out (RFC 9728 §3.2: a parameter with zero
+  # values MUST be omitted).
+  defp put_dpop_signing_algs(opts) do
+    {authenticate, opts} = Keyword.pop(opts, :authenticate)
+
+    case Keyword.get(opts, :dpop_signing_alg_values_supported) do
+      nil -> put_default_dpop_signing_algs(opts, authenticate)
+      omit when omit in [false, []] -> Keyword.delete(opts, :dpop_signing_alg_values_supported)
+      _algs -> opts
+    end
+  end
+
+  # With no `:authenticate` options the default list is published, as before.
+  # With them, the default follows what the plug accepts.
+  defp put_default_dpop_signing_algs(opts, authenticate) do
+    if is_nil(authenticate) or Authenticate.accepts_dpop?(authenticate) do
+      Keyword.put(opts, :dpop_signing_alg_values_supported, DPoP.allowed_algs())
+    else
+      Keyword.delete(opts, :dpop_signing_alg_values_supported)
     end
   end
 
