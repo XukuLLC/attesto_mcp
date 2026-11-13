@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "2.5.0"
+  @version "2.6.0"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -116,7 +116,7 @@ defmodule AttestoMCP.MixProject do
          not Enum.any?(System.argv(), &(&1 in ["hex.build", "hex.publish"])) do
       {:attesto, path: "../attesto", override: true}
     else
-      {:attesto, ">= 2.13.0 and < 3.0.0"}
+      {:attesto, ">= 2.19.0 and < 3.0.0"}
     end
   end
 
@@ -146,6 +146,7 @@ defmodule AttestoMCP.MixProject do
       # index but named in the changelog; render them as code without links.
       skip_code_autolink_to: [
         "AttestoMCP.Test",
+        "AttestoMCP.Plug.Authenticate.init/1",
         "AttestoMCP.Plug.Authenticate.metadata_www_authenticate/1",
         "AttestoMCP.Metadata.authorization_server/2",
         "AttestoMCP.Metadata.resource_metadata_param/1",

@@ -11,6 +11,7 @@
 /integration/*/_build/
 /integration/*/deps/
 /integration/*/mix.lock
+!/integration/minimum_consumer/mix.lock
 
 # Where third-party dependencies like ExDoc output generated docs.
 /doc/

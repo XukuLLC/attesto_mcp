@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.6.0] - 2026-11-13
+
+Requires attesto >= 2.19.0 (was >= 2.13.0).
+
+- Raise the Attesto dependency floor and update production-consumer and
+  published-package compatibility checks to Attesto 2.19.0 or later.
+
 ## [2.5.0] - 2026-11-12
 
 ### Breaking
