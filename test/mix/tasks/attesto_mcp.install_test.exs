@@ -163,6 +163,21 @@ defmodule Mix.Tasks.AttestoMcp.InstallTest do
         reached = call.(method, accept, token)
         assert {reached.status, reached.resp_body} == {200, "transport"}
       end
+
+      for audience <- ["https://attacker.example/mcp", "https://mcp.example.com/admin"] do
+        sibling_token = Factory.access_token(InstallerTestConfig.config(), audience: audience, scopes: ["mcp:use"])
+
+        refused =
+          :post
+          |> conn("https://attacker.example/mcp")
+          |> put_req_header("authorization", "Bearer " <> sibling_token)
+          |> router.call(router.init([]))
+
+        assert refused.status == 401
+        assert JSON.decode!(refused.resp_body)["error"] == "invalid_token"
+        assert [challenge] = get_resp_header(refused, "www-authenticate")
+        assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+      end
     end
 
     test "missing or malformed config options stop before router mutation" do

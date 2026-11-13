@@ -347,18 +347,10 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       end
     end
 
-    test "without :resource_audience the host's global config.audience is used", %{config: config} do
-      # Backward compatible: a token audienced to the global config.audience is
-      # accepted (no per-resource override).
-      token = Factory.access_token(config, scopes: [Scopes.tools_call()])
-
-      conn =
-        :post
-        |> conn("/mcp")
-        |> put_req_header("authorization", "Bearer " <> token)
-        |> protect(config, scopes: [Scopes.tools_call()], resource_path: "/mcp")
-
-      refute conn.halted
+    test "config.audience alone no longer selects the policy", %{config: config} do
+      assert_raise ArgumentError, ~r/configure :resource_audience or :trusted_audiences explicitly/, fn ->
+        ProtectResource.init(config: config, scopes: [Scopes.tools_call()], resource_path: "/mcp")
+      end
     end
   end
 
@@ -475,7 +467,15 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
   end
 
   test "the deprecated :resource path alias remains compatible", %{config: config} do
-    protection = ProtectResource.init(config: config, scopes: [Scopes.tools_call()], resource: "/legacy")
+    protection =
+      ProtectResource.init(
+        config: config,
+        scopes: [Scopes.tools_call()],
+        resource: "/legacy",
+        base_url: "https://mcp.example.com",
+        resource_audience: :resource
+      )
+
     assert Keyword.fetch!(protection.authenticate, :resource_path) == "/legacy"
   end
 
@@ -685,6 +685,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       protection =
         ProtectResource.prepare(
           config: config,
+          resource_audience: Factory.htu(),
           htu: &Factory.htu/1,
           resource_path: "/mcp",
           scopes_key: :custom_scopes
@@ -709,6 +710,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       boundary_b =
         ProtectResource.prepare(
           config: config,
+          resource_audience: Factory.htu(),
           htu: &Factory.htu/1,
           resource_path: "/mcp",
           step_up: [acr_values: ["phr"]]
@@ -733,6 +735,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       static =
         ProtectResource.init(
           config: config,
+          resource_audience: Factory.htu(),
           htu: &Factory.htu/1,
           resource_path: "/mcp",
           scopes: [Scopes.tools_call()]
@@ -846,6 +849,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     test "prepare/1 is escape-safe" do
       opts = [
         config: &Factory.config/0,
+        resource_audience: :resource,
         resource_path: "/mcp",
         base_url: "https://mcp.example.com"
       ]
@@ -861,6 +865,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     # baked into init - otherwise the router carrying this plug will not compile.
     opts = [
       config: &Factory.config/0,
+      resource_audience: :resource,
       resource_path: "/mcp",
       scopes: [Scopes.tools_call()],
       base_url: "https://mcp.example.com"
@@ -874,6 +879,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     assert_raise ArgumentError, ~r/either :scope or :scopes/, fn ->
       ProtectResource.init(
         config: config,
+        resource_audience: Factory.htu(),
         scope: Scopes.tools_call(),
         scopes: [Scopes.tools_call()]
       )
@@ -882,6 +888,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     assert_raise ArgumentError, ~r/unique RFC 6749/, fn ->
       ProtectResource.init(
         config: config,
+        resource_audience: Factory.htu(),
         scopes: [Scopes.tools_call(), Scopes.tools_call()]
       )
     end
@@ -941,6 +948,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       assert_raise ArgumentError, ~r/:resource_metadata_url/, fn ->
         ProtectResource.init(
           config: config,
+          resource_audience: Factory.htu(),
           scopes: [Scopes.tools_call()],
           resource_metadata_url: url
         )
@@ -949,6 +957,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
 
     assert ProtectResource.init(
              config: config,
+             resource_audience: Factory.htu(),
              scopes: [Scopes.tools_call()],
              resource_metadata_url: "http://localhost:4000/.well-known/oauth-protected-resource",
              allow_http: true
@@ -962,6 +971,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
 
       plug ProtectResource,
         config: &Factory.config/0,
+        resource_audience: :resource,
         resource_path: "/mcp",
         scopes: ["mcp:tools:call"],
         base_url: "https://mcp.example.com"
@@ -1001,6 +1011,11 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
         opts
       )
 
+    opts =
+      if Keyword.has_key?(opts, :trusted_audiences),
+        do: opts,
+        else: Keyword.put_new(opts, :resource_audience, Factory.htu())
+
     ProtectResource.call(conn, ProtectResource.init(opts))
   end
 
@@ -1009,6 +1024,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
       Keyword.merge(
         [
           config: config,
+          resource_audience: Factory.htu(),
           htu: &Factory.htu/1,
           resource_path: "/mcp"
         ],

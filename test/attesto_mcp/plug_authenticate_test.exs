@@ -129,7 +129,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
   end
 
   defp pinned_authenticate(conn, config, opts) do
-    opts = Keyword.merge([config: config, replay_check: DPoPReplay.callback()], opts)
+    opts = Keyword.merge([config: config, resource_audience: Factory.htu(), replay_check: DPoPReplay.callback()], opts)
     Authenticate.call(conn, Authenticate.init(opts))
   end
 
@@ -359,11 +359,16 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
 
   test "blank resource metadata URL fails during initialization", %{config: config} do
     assert_raise ArgumentError, ~r/:resource_metadata_url/, fn ->
-      Authenticate.init(config: config, resource_metadata_url: "")
+      Authenticate.init(config: config, resource_audience: Factory.htu(), resource_metadata_url: "")
     end
 
     assert_raise ArgumentError, ~r/:resource_metadata_url/, fn ->
-      Authenticate.init(config: config, resource_metadata_url: "", resource_path: "/mcp")
+      Authenticate.init(
+        config: config,
+        resource_audience: Factory.htu(),
+        resource_metadata_url: "",
+        resource_path: "/mcp"
+      )
     end
   end
 
@@ -560,7 +565,12 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     # init/1 must bake no closure: under plug_init_mode: :compile its result is
     # embedded via Macro.escape, which rejects anonymous functions. The generated
     # resource_metadata challenge is built in call/2, never in init/1.
-    opts = [config: &Factory.config/0, resource_path: "/mcp", base_url: "https://mcp.example.com"]
+    opts = [
+      config: &Factory.config/0,
+      resource_audience: :resource,
+      resource_path: "/mcp",
+      base_url: "https://mcp.example.com"
+    ]
 
     assert opts |> Authenticate.init() |> Macro.escape()
   end
@@ -569,6 +579,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
     opts =
       Authenticate.init(
         config: &Factory.config/0,
+        resource_audience: Factory.htu(),
         resource_path: "/mcp",
         step_up: [acr_values: ["phr"], max_age: 300]
       )

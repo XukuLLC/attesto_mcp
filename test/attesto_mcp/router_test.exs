@@ -5,6 +5,7 @@ defmodule AttestoMCP.RouterTest do
   import Plug.Conn
   import Plug.Test
 
+  alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Scopes
 
   defmodule Origins do
@@ -95,6 +96,18 @@ defmodule AttestoMCP.RouterTest do
     metadata = get_metadata("/.well-known/oauth-protected-resource/mcp/pinned")
 
     assert metadata["resource"] == "https://canonical.example/mcp/pinned"
+  end
+
+  test "serving canonical metadata does not select the protected endpoint's audience policy" do
+    metadata = get_metadata("/.well-known/oauth-protected-resource/mcp/pinned")
+    assert metadata["resource"] == "https://canonical.example/mcp/pinned"
+
+    assert_raise ArgumentError, ~r/configure :resource_audience or :trusted_audiences explicitly/, fn ->
+      Authenticate.init(
+        base_url: "https://canonical.example",
+        resource_path: "/mcp/pinned"
+      )
+    end
   end
 
   test "an {module, fun} base_url tuple survives compiled route private and pins the resource" do

@@ -17,6 +17,12 @@ defmodule AttestoMCP.Router do
   `resource_metadata` challenge, so discovery and challenge agree when both are
   given the same origin (see "Pinning the origin behind a proxy" below).
 
+  These routes only publish metadata; they do not configure token verification.
+  The protected endpoint must separately configure `:resource_audience` or
+  `:trusted_audiences` on `AttestoMCP.Plug.Authenticate` / `ProtectResource`.
+  Prefer `resource_audience: :resource` with the same pinned origin and resource
+  path. The metadata macro itself does not require an audience policy.
+
   ## Single resource
 
       defmodule MyAppWeb.Router do

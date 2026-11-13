@@ -111,6 +111,11 @@ resource, so a token minted for a sibling endpoint cannot be replayed here.
 
 `ProtectResource` / `Plug.Authenticate` enforce that with `resource_audience`:
 
+**Breaking:** `Authenticate.init/1`, `ProtectResource.init/1`, and
+`ProtectResource.prepare/1` now require an explicit audience policy. Publishing
+metadata, pinning an origin, or setting `config.audience` alone is insufficient.
+Use the resource-bound recipe below (RFC 8707 §2; RFC 9728 §7.4):
+
 ```elixir
 plug AttestoMCP.Plug.ProtectResource,
   config: &MyApp.Attesto.config/0,
@@ -137,6 +142,17 @@ fails authentication; it never disables route confinement for that request.
 exclusive. Choose the route-derived convenience option or supply the complete
 core policy directly; configuring both raises during plug initialization so
 neither policy can silently replace the other.
+
+For a deliberate alternative, pass `trusted_audiences: ["your-resource-id"]`
+or a one-arity claims resolver returning a non-empty list of non-empty
+identifiers. This is the complete trusted set; it replaces `config.audience`.
+Every member of an array-valued `aud` must occur in that set. If retaining the
+configured identifier is intentional, pass `trusted_audiences: [config.audience]`
+explicitly at initialization. A resolver must select trusted configuration,
+never derive trust from `aud` itself, and must not perform side effects; see
+`Attesto.Token.verify/3`. Malformed static policies raise at initialization;
+invalid resolver results fail authentication. `resource_audience: nil` or
+`false` does not opt out: an explicit `trusted_audiences` policy is still required.
 
 `resource_audience: :resource` requires a pinned `:base_url` or `:origin`.
 Initialization raises when the pin is absent or malformed, so the request
@@ -166,7 +182,7 @@ either here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 2.4"}
+    {:attesto_mcp, "~> 2.5"}
   ]
 end
 ```
@@ -208,6 +224,7 @@ pipeline :mcp_auth do
     base_url: "https://mcp.example.com",
     replay_check: &MyApp.DPoPReplay.check_and_record/2,
     resource_path: "/mcp",
+    resource_audience: :resource,
     principal: fn claims, sender ->
       MyApp.Principals.from_token(claims, sender)
     end
@@ -283,6 +300,9 @@ For mTLS-bound access tokens, supply certificate context from your TLS layer:
 ```elixir
 plug AttestoMCP.Plug.Authenticate,
   config: &MyApp.Attesto.config/0,
+  resource_path: "/mcp",
+  base_url: "https://mcp.example.com",
+  resource_audience: :resource,
   cert_der: fn conn ->
     MyApp.TLS.client_certificate_der(conn)
   end
@@ -438,6 +458,8 @@ pipeline :mcp_auth do
     config: &MyApp.Attesto.config/0,
     replay_check: &MyApp.DPoPReplay.check_and_record/2,
     resource_path: "/mcp",
+    base_url: "https://mcp.example.com",
+    resource_audience: :resource,
     scopes: [AttestoMCP.Scopes.tools_call()]
 end
 
@@ -537,11 +559,11 @@ A stable `2.x` release. Public functions remain compatible within 2.x where
 security permits. Security and correctness fixes may tighten validation or
 derived defaults in a minor release; the CHANGELOG identifies required
 migrations and behavior changes. Pin an exact minor when unchanged behavior is
-required. Pin to `~> 2.4` for the current security boundary.
+required. Pin to `~> 2.5` for the current security boundary.
 
 ## Security notes
 
-- Deploy AttestoMCP 2.4.0 with Attesto 2.13.0 or later in the 2.x line. This
+- Deploy AttestoMCP 2.5.0 with Attesto 2.13.0 or later in the 2.x line. This
   floor supplies the shared protected-resource metadata, strict URI policy, and
   null-aware confirmation checks used directly by the MCP boundary.
 - Use HTTPS for HTTP MCP servers.

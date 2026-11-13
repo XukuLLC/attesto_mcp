@@ -27,6 +27,10 @@ When TLS is terminated upstream and the app sees proxied requests:
 When `resource_audience: :resource` is enabled, the resource identifier is also
 the token audience policy. AttestoMCP therefore requires a pinned origin for
 that policy and raises during plug initialization if it is absent or malformed.
+Every authentication boundary requires either `:resource_audience` or an
+explicit `:trusted_audiences` policy; a pin or metadata document alone does not
+choose one. Origin and audience callbacks must resolve trusted configuration,
+never copy an unchecked request `Host` into the audience policy.
 
 ## The recipe
 
@@ -81,6 +85,7 @@ challenge URL matches the served `resource`:
 plug AttestoMCP.Plug.ProtectResource,
   config: &MyApp.Attesto.config/0,
   resource_path: "/mcp",
+  resource_audience: :resource,
   scopes: [AttestoMCP.Scopes.tools_call()],
   base_url: "https://mcp.example.com"
 ```

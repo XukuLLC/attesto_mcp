@@ -170,6 +170,13 @@ route-derived policy with Attesto core's `trusted_audiences`; configure one or
 the other. The route-derived audience requires `:base_url`/`:origin`; pin the
 same value on both sides.
 
+Both `Authenticate.init/1` and `ProtectResource.init/1` / `prepare/1` refuse to
+initialize without an explicit `:resource_audience` or `:trusted_audiences`
+policy. Metadata routes remain public discovery routes and do not configure
+token acceptance. A configured core audience alone no longer suffices. For a
+deliberate alternative, use a non-empty `trusted_audiences` list or a one-arity
+claims resolver as documented by `AttestoMCP.Plug.Authenticate`.
+
 ## Combined authorization server and multiple MCP resources
 
 One Phoenix host can mount one `attesto_phoenix` authorization-server catalog
@@ -262,6 +269,8 @@ plug AttestoMCP.Plug.ProtectResource,
   config: &MyApp.Attesto.config/0,
   resource_path: "/mcp",
   scopes: [AttestoMCP.Scopes.tools_call()],
+  base_url: "https://mcp.example.com",
+  resource_audience: :resource,
   cert_der: fn conn -> MyApp.TLS.client_certificate_der(conn) end
 ```
 

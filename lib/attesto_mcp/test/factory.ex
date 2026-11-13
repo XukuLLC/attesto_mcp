@@ -138,10 +138,22 @@ defmodule AttestoMCP.Test.Factory do
   @spec htu(Plug.Conn.t()) :: String.t()
   def htu(_conn), do: @audience
 
-  @doc "Run the AttestoMCP authentication plug with the factory request URI."
+  @doc """
+  Run the authentication plug with the factory request URI and audience.
+
+  Unless `:resource_audience` or `:trusted_audiences` is supplied, the explicit
+  test audience is `#{@audience}`. It does not follow `config.audience` or the
+  request Host. Pass an audience policy when testing another resource.
+  """
   @spec authenticate(Plug.Conn.t(), Attesto.Config.t(), keyword()) :: Plug.Conn.t()
   def authenticate(conn, config, opts \\ []) do
     opts = Keyword.merge([config: config, htu: &__MODULE__.htu/1], opts)
+
+    opts =
+      if Keyword.has_key?(opts, :trusted_audiences),
+        do: opts,
+        else: Keyword.put_new(opts, :resource_audience, @audience)
+
     Authenticate.call(conn, Authenticate.init(opts))
   end
 

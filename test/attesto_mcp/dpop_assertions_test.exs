@@ -30,6 +30,7 @@ defmodule AttestoMCP.Test.DPoPAssertionsTest do
     opts =
       ProtectResource.init(
         config: config,
+        resource_audience: Factory.htu(),
         htu: &Factory.htu/1,
         replay_check: DPoPReplay.callback(),
         scopes: [Scopes.tools_call()]

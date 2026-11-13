@@ -322,7 +322,13 @@ defmodule AttestoMCP.TelemetryTest do
     end
 
     test "ProtectResource emits both spans, including through authorize/3", %{config: config} do
-      protection = ProtectResource.init(config: config, htu: &Factory.htu/1, scopes: [Scopes.tools_call()])
+      protection =
+        ProtectResource.init(
+          config: config,
+          resource_audience: Factory.htu(),
+          htu: &Factory.htu/1,
+          scopes: [Scopes.tools_call()]
+        )
 
       composed =
         config
@@ -334,7 +340,7 @@ defmodule AttestoMCP.TelemetryTest do
       assert_span(:authenticate, %{outcome: :ok})
       assert_span(:require_scopes, %{outcome: :insufficient_scope, status: 403})
 
-      prepared = ProtectResource.prepare(config: config, htu: &Factory.htu/1)
+      prepared = ProtectResource.prepare(config: config, resource_audience: Factory.htu(), htu: &Factory.htu/1)
 
       split =
         config

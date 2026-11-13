@@ -28,6 +28,12 @@ defmodule AttestoMCP.Plug.Authenticate do
   `:origin` is this plug's own option (see below) and is not passed to core
   as core's `:origin`; a pinned origin reaches core as the DPoP `:htu`.
 
+  An explicit audience policy is required at initialization: configure
+  `:resource_audience` or `:trusted_audiences`. Publishing RFC 9728 metadata,
+  pinning an origin, or setting `config.audience` alone does not select this
+  policy. Neither `nil` nor `false` is an audience decision. Prefer
+  `resource_audience: :resource` with a pinned origin and resource path.
+
   MCP defaults to `bearer_methods: [:header]`, matching protected-resource
   metadata that advertises `bearer_methods_supported: ["header"]`. A host that
   genuinely needs RFC 6750 §2.2 form-body tokens can opt in with
@@ -54,6 +60,14 @@ defmodule AttestoMCP.Plug.Authenticate do
       malformed result fails authentication and never disables confinement.
       The `:resource` form requires a valid pinned `:base_url` or `:origin` at
       initialization so the request `Host` cannot choose the audience.
+    * `:trusted_audiences` - deliberate alternative to `:resource_audience`:
+      a non-empty list of non-empty audience identifiers, or a one-arity
+      resolver returning that list. This replaces `config.audience`; every
+      member of a token's audience array must be trusted. The resolver follows
+      `Attesto.Token.verify/3`'s contract: use verified claims to select trusted
+      configuration, never trust `aud` itself or perform side effects. Invalid
+      results fail authentication. Audience and origin callbacks must use
+      trusted configuration, never an unchecked request `Host`.
     * `:principal` - optional callback (`(claims, sender -> ...)` or
       `{module, fun}` / `{module, fun, extra_args}`) that receives verified
       claims and sender context, returning `{:ok, principal}` or
@@ -115,6 +129,7 @@ defmodule AttestoMCP.Plug.Authenticate do
         config: &MyApp.Attesto.config/0,
         replay_check: &MyApp.DPoPReplay.check_and_record/2,
         resource_path: "/mcp",
+        resource_audience: :resource,
         scopes: [AttestoMCP.Scopes.tools_call()],
         base_url: "https://mcp.example.com"
 
@@ -197,8 +212,8 @@ defmodule AttestoMCP.Plug.Authenticate do
   # resource's identifier (the same value advertised as the RFC 9728 metadata
   # `resource`). This rejects both a sibling scalar audience and an array that
   # mixes this resource with any other audience. The identifier is computed per
-  # request because it honors the live / pinned origin; absent, the host config
-  # audience (or an explicitly supplied core policy) is used unchanged.
+  # request because it honors the pinned origin or explicit callback; absent,
+  # initialization requires an explicit core trust policy instead.
   defp put_resource_audience(core, conn, opts) do
     case Keyword.get(opts, :resource_audience) do
       nil -> core
@@ -249,11 +264,7 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   defp validate_audience_policy!(opts) do
     resource_audience = Keyword.get(opts, :resource_audience)
-
-    if resource_audience not in [nil, false] and Keyword.has_key?(opts, :trusted_audiences) do
-      raise ArgumentError,
-            ":resource_audience and :trusted_audiences are mutually exclusive; choose one audience policy"
-    end
+    validate_explicit_audience_policy!(resource_audience, Keyword.fetch(opts, :trusted_audiences))
 
     if resource_audience == :resource and not is_binary(Keyword.get(opts, :resource_path)) do
       raise ArgumentError,
@@ -272,6 +283,29 @@ defmodule AttestoMCP.Plug.Authenticate do
     :ok
   end
 
+  defp validate_explicit_audience_policy!(resource_audience, :error) when resource_audience in [nil, false] do
+    raise ArgumentError,
+          "configure :resource_audience or :trusted_audiences explicitly; " <>
+            "metadata and config.audience alone do not select an MCP audience policy"
+  end
+
+  defp validate_explicit_audience_policy!(resource_audience, {:ok, _trusted})
+       when resource_audience not in [nil, false] do
+    raise ArgumentError,
+          ":resource_audience and :trusted_audiences are mutually exclusive; choose one audience policy"
+  end
+
+  defp validate_explicit_audience_policy!(_resource_audience, {:ok, trusted}) do
+    if not valid_trusted_audiences_policy?(trusted) do
+      raise ArgumentError,
+            ":trusted_audiences must be a non-empty list of non-empty identifiers or a one-arity function"
+    end
+
+    :ok
+  end
+
+  defp validate_explicit_audience_policy!(_resource_audience, :error), do: :ok
+
   defp valid_resource_audience_policy?(value) when value in [nil, false, :resource], do: true
   defp valid_resource_audience_policy?(value) when is_binary(value), do: value != ""
   defp valid_resource_audience_policy?(value) when is_function(value, 1), do: true
@@ -282,6 +316,12 @@ defmodule AttestoMCP.Plug.Authenticate do
     do: true
 
   defp valid_resource_audience_policy?(_value), do: false
+
+  # Core verifies the resolved policy and token together at request time. Check
+  # the static option here so a missing or malformed decision fails at boot.
+  defp valid_trusted_audiences_policy?([_ | _] = audiences), do: Enum.all?(audiences, &(is_binary(&1) and &1 != ""))
+
+  defp valid_trusted_audiences_policy?(resolver), do: is_function(resolver, 1)
 
   defp validate_resource_path!(opts) do
     case Keyword.fetch(opts, :resource_path) do

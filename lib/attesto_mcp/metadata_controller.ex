@@ -11,6 +11,11 @@ if Code.ensure_loaded?(Phoenix.Controller) do
     The authorization server must be supplied by `:authorization_servers`,
     `:issuer`, or `:config`; it is never derived from the request authority.
 
+    This public discovery controller does not authenticate tokens or select an
+    audience policy. Configure `:resource_audience` or `:trusted_audiences` on
+    the plug protecting the MCP endpoint, even when this controller publishes
+    its canonical resource identifier.
+
     Because the `resource` identifier is resolved the same way
     `AttestoMCP.Plug.ProtectResource` resolves its `WWW-Authenticate`
     `resource_metadata` challenge, the discovered metadata URL and the served

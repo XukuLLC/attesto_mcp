@@ -16,6 +16,7 @@ defmodule AttestoMCP.Plug.ProtectResource do
         config: &MyApp.Attesto.config/0,
         replay_check: &MyApp.DPoPReplay.check_and_record/2,
         resource_path: "/mcp",
+        resource_audience: :resource,
         scopes: [AttestoMCP.Scopes.tools_call()],
         base_url: "https://mcp.example.com"
 
@@ -31,6 +32,7 @@ defmodule AttestoMCP.Plug.ProtectResource do
         config: &MyApp.Attesto.config/0,
         replay_check: &MyApp.DPoPReplay.check_and_record/2,
         resource_path: "/mcp",
+        resource_audience: :resource,
         base_url: "https://mcp.example.com"
 
       plug AttestoMCP.Plug.RequireScopes,
@@ -45,7 +47,9 @@ defmodule AttestoMCP.Plug.ProtectResource do
       protection =
         AttestoMCP.Plug.ProtectResource.prepare(
           config: &MyApp.Attesto.config/0,
-          resource_path: "/mcp"
+          resource_path: "/mcp",
+          base_url: "https://mcp.example.com",
+          resource_audience: :resource
         )
 
       conn = AttestoMCP.Plug.ProtectResource.authenticate(conn, protection)
@@ -70,6 +74,11 @@ defmodule AttestoMCP.Plug.ProtectResource do
   dispatch; a prepared split boundary is deliberately not accepted by `call/2`.
 
   ## Options
+
+  Both `init/1` and `prepare/1` require an explicit `:resource_audience` or
+  `:trusted_audiences` policy and raise `ArgumentError` without one. Metadata,
+  an origin pin, and `config.audience` alone do not select an audience policy.
+  A `nil` or `false` `:resource_audience` still requires `:trusted_audiences`.
 
     * `:scopes` (or `:scope`) - the scope(s) a normal Plug route requires,
       forwarded to `AttestoMCP.Plug.RequireScopes`. At least one scope is
@@ -107,6 +116,9 @@ defmodule AttestoMCP.Plug.ProtectResource do
       an array-valued audience must match. This option is mutually exclusive
       with Attesto core's `:trusted_audiences`; configuring both raises. The
       `:resource` form requires a pinned `:base_url` or `:origin`.
+    * `:trusted_audiences` - deliberate alternative policy: a non-empty list of
+      non-empty identifiers or a one-arity claims resolver returning that list.
+      See `AttestoMCP.Plug.Authenticate` for the resolver's trust contract.
 
   Every other option is passed through to `AttestoMCP.Plug.Authenticate`:
   `:config`, `:replay_check`, `:nonce_check`, `:nonce_issue`, `:cert_der`,

@@ -5,6 +5,27 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.5.0] - 2026-11-12
+
+### Breaking
+
+- `AttestoMCP.Plug.Authenticate.init/1`, `ProtectResource.init/1`, and
+  `ProtectResource.prepare/1` now require an explicit audience decision:
+  `:resource_audience` or `:trusted_audiences`. They raise `ArgumentError`
+  when neither is configured; `nil` and `false` do not bypass the requirement.
+  Use `resource_audience: :resource` with a pinned `:base_url` or `:origin`
+  and `:resource_path`, a literal identifier, or an existing audience callback.
+  The deliberate alternative is a non-empty `:trusted_audiences` list of
+  non-empty identifiers or a one-arity resolver returning that list. Malformed
+  static policies fail at initialization; invalid resolver results still fail
+  authentication. Publishing a canonical RFC 9728 §2 resource identifier does
+  not configure token acceptance. This makes the audience decision explicit
+  under RFC 8707 §2 and RFC 9728 §7.4. Metadata routes remain public, and the
+  installer already emits the pinned resource policy.
+- `AttestoMCP.Test.Factory.authenticate/3` explicitly uses the factory's fixed
+  test resource audience unless an audience policy is supplied; it no longer
+  follows a changed `config.audience` implicitly.
+
 ## [2.4.0] - 2026-11-11
 
 Requires attesto >= 2.13.0.
