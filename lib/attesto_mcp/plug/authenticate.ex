@@ -97,10 +97,20 @@ defmodule AttestoMCP.Plug.Authenticate do
       :resource` identifier, and the DPoP target URI (see below), instead of
       deriving them from the request connection. Use it behind a
       TLS-terminating proxy and on any server that answers more than one
-      `Host`. When omitted, the live request origin is used. This origin is the
-      resource server's own; it is independent of the `:config` issuer (the
-      authorization server). The option is mandatory when
-      `resource_audience: :resource` is enabled.
+      `Host`. When omitted, the live request origin is used only for discovery
+      and Bearer-only mounts. This origin is the resource server's own; it is
+      independent of the `:config` issuer (the authorization server). Mandatory
+      when `resource_audience: :resource` is enabled, and one of `:base_url`,
+      `:origin`, `:htu`, or `allow_dynamic_origin: true` with `:allowed_hosts`
+      is required when the mount accepts DPoP.
+    * `:allow_dynamic_origin` - set `true` (only alongside `:allowed_hosts`)
+      to permit deriving the DPoP target URI from the request `Host` when the
+      host matches the explicit `:allowed_hosts` allowlist. Mutually exclusive
+      with `:base_url` and `:origin`. Intended for explicitly local multi-host
+      development endpoints.
+    * `:allowed_hosts` - non-empty list of host or `host:port` strings allowed
+      when `allow_dynamic_origin: true` is configured. Requests for any other
+      `Host` are refused with HTTP 401 (`invalid_token`).
     * `:allow_http` - permit an HTTP `resource_metadata` URL for a deliberate
       development endpoint. HTTPS remains the default.
 
@@ -110,17 +120,23 @@ defmodule AttestoMCP.Plug.Authenticate do
   (`htu`), so a proof sent to one server cannot be replayed to another. The URI
   a proof must sign is chosen in this order:
 
-    1. an explicit `:htu` callback, passed to `Attesto.Plug.Authenticate`
-       unchanged;
+    1. an explicit `:htu` callback (`(conn -> uri)`), passed to
+       `Attesto.Plug.Authenticate` unchanged;
     2. with `:base_url` or `:origin` pinned, the resolved origin followed by
        `conn.request_path` (`dpop_target_uri/2`). The request's scheme, `Host`
        header, and port are not used. A pinned value with a path prefix
        (`"https://example.com/tools"`) assumes the proxy strips that prefix,
        so the application sees `/mcp` for an external `/tools/mcp`;
-    3. otherwise Attesto core's default, built from `conn.scheme`,
-       `conn.host`, and `conn.port`. `conn.host` comes from the request `Host`
-       header, so a server that answers any `Host` then accepts a proof made
-       for another server when the sender names that server in `Host`.
+    3. with `allow_dynamic_origin: true` and `:allowed_hosts`, requests whose
+       `Host` is in `:allowed_hosts` use the request's origin followed by
+       `conn.request_path`, and requests for any other `Host` are refused.
+
+  A mount that accepts DPoP (`:replay_check` or
+  `dpop_replay_unprotected_acknowledged?: true`) refuses to initialize unless
+  one of `:base_url`, `:origin`, `:htu`, or `allow_dynamic_origin: true` with
+  `:allowed_hosts` is configured. Malformed `:htu` values raise `ArgumentError`
+  at initialization instead of discarding the origin pin. Bearer-only mounts
+  are unaffected.
 
   Pin `:base_url` (or `:origin`) on every endpoint that accepts DPoP-bound
   tokens:
@@ -157,6 +173,8 @@ defmodule AttestoMCP.Plug.Authenticate do
   @principal_key :attesto_mcp_principal
   @context_key :attesto_context
   @mcp_option_keys [
+    :allow_dynamic_origin,
+    :allowed_hosts,
     :base_url,
     :context_key,
     :origin,
@@ -170,15 +188,22 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   @impl Plug
   def init(opts) when is_list(opts) do
+    validate_htu_opt!(opts)
     Metadata.validate_origin_options!(opts)
+    validate_dynamic_origin_options!(opts)
+    validate_dpop_pin!(opts)
     validate_resource_path!(opts)
     validate_audience_policy!(opts)
     validate_resource_metadata_url!(opts)
 
+    inject_htu? = AttestoAuthenticate.accepts_dpop?(opts) and not Keyword.has_key?(opts, :htu)
+
     normalized_core_opts =
       opts
       |> core_opts(Keyword.get(opts, :claims_key, @claims_key))
+      |> maybe_put_init_htu(inject_htu?)
       |> AttestoAuthenticate.init()
+      |> maybe_drop_init_htu(inject_htu?)
 
     # Retain MCP-only configuration while preserving every validation and
     # normalization performed by the core plug at pipeline initialization.
@@ -191,20 +216,128 @@ defmodule AttestoMCP.Plug.Authenticate do
     sender_key = Keyword.get(opts, :sender_key, @sender_key)
 
     Telemetry.span(:authenticate, fn ->
+      conn =
+        conn
+        |> Telemetry.put_outcome(nil)
+        |> authenticate_request(opts, claims_key)
+
+      {conn, Telemetry.stop_metadata(conn, sender_key)}
+    end)
+  end
+
+  defp authenticate_request(conn, opts, claims_key) do
+    if dynamic_host_forbidden?(conn, opts) do
+      OAuthError.unauthorized(
+        conn,
+        :bearer,
+        "invalid_token",
+        error_opts(opts, description: "request host is not allowed")
+      )
+    else
       core =
         opts
         |> put_resource_audience(conn, opts)
         |> put_pinned_htu(opts)
 
-      conn =
-        conn
-        |> Telemetry.put_outcome(nil)
-        |> AttestoAuthenticate.call(core)
-
-      conn = if conn.halted, do: conn, else: assign_context(conn, opts, claims_key)
-      {conn, Telemetry.stop_metadata(conn, sender_key)}
-    end)
+      conn = AttestoAuthenticate.call(conn, core)
+      if conn.halted, do: conn, else: assign_context(conn, opts, claims_key)
+    end
   end
+
+  @doc false
+  @spec unconfigured_dpop_htu!(Plug.Conn.t()) :: no_return()
+  def unconfigured_dpop_htu!(_conn) do
+    raise ArgumentError, "AttestoMCP.Plug.Authenticate requires :htu or a pinned origin when DPoP is enabled"
+  end
+
+  defp maybe_put_init_htu(core, true), do: Keyword.put(core, :htu, &__MODULE__.unconfigured_dpop_htu!/1)
+  defp maybe_put_init_htu(core, false), do: core
+
+  defp maybe_drop_init_htu(core, true), do: Keyword.delete(core, :htu)
+  defp maybe_drop_init_htu(core, false), do: core
+
+  defp validate_htu_opt!(opts) do
+    if Keyword.has_key?(opts, :htu) and not is_function(Keyword.get(opts, :htu), 1) do
+      raise ArgumentError,
+            "AttestoMCP.Plug.Authenticate: :htu must be a 1-arity function (conn -> uri); " <>
+              "got #{inspect(Keyword.get(opts, :htu))}"
+    end
+  end
+
+  defp validate_dynamic_origin_options!(opts) do
+    allow_dynamic = Keyword.get(opts, :allow_dynamic_origin, false)
+
+    if not is_boolean(allow_dynamic) do
+      raise ArgumentError, ":allow_dynamic_origin must be a boolean"
+    end
+
+    if Keyword.has_key?(opts, :allowed_hosts) and not allow_dynamic do
+      raise ArgumentError,
+            ":allowed_hosts applies only with allow_dynamic_origin: true; a pinned origin never consults Host"
+    end
+
+    if allow_dynamic, do: validate_enabled_dynamic_origin!(opts), else: :ok
+  end
+
+  defp validate_enabled_dynamic_origin!(opts) do
+    if origin_pinned?(opts) do
+      raise ArgumentError, ":allow_dynamic_origin cannot be combined with :base_url or :origin"
+    end
+
+    hosts = Keyword.get(opts, :allowed_hosts)
+
+    if is_list(hosts) and hosts != [] and Enum.all?(hosts, &valid_allowed_host?/1) do
+      :ok
+    else
+      raise ArgumentError, ":allowed_hosts must be a non-empty list of host or host:port strings"
+    end
+  end
+
+  defp validate_dpop_pin!(opts) do
+    if AttestoAuthenticate.accepts_dpop?(opts) and
+         not Keyword.has_key?(opts, :htu) and
+         not origin_pinned?(opts) and
+         Keyword.get(opts, :allow_dynamic_origin) != true do
+      raise ArgumentError,
+            "AttestoMCP.Plug.Authenticate: a mount that accepts DPoP requires :base_url, :origin, :htu, " <>
+              "or allow_dynamic_origin: true with :allowed_hosts"
+    end
+  end
+
+  defp valid_allowed_host?(host) when is_binary(host) do
+    byte_size(host) in 1..255 and String.valid?(host) and
+      not String.contains?(host, [" ", "\t", "\r", "\n", "/", "\\", "@", "?", "#"])
+  end
+
+  defp valid_allowed_host?(_host), do: false
+
+  defp dynamic_host_forbidden?(conn, opts) do
+    Keyword.get(opts, :allow_dynamic_origin) == true and
+      not host_allowed?(conn, Keyword.get(opts, :allowed_hosts, []))
+  end
+
+  @doc false
+  @spec host_allowed?(Plug.Conn.t(), [String.t()]) :: boolean()
+  def host_allowed?(conn, hosts) when is_list(hosts) do
+    case normalize_allowed_host(conn.host) do
+      "" ->
+        false
+
+      host ->
+        authority = host <> ":" <> Integer.to_string(conn.port)
+        Enum.any?(hosts, fn allowed -> normalize_allowed_host(allowed) in [host, authority] end)
+    end
+  end
+
+  defp normalize_allowed_host(host) when is_binary(host) do
+    host
+    |> String.trim()
+    |> String.replace(["[", "]"], "")
+    |> String.trim_trailing(".")
+    |> String.downcase(:ascii)
+  end
+
+  defp normalize_allowed_host(_host), do: ""
 
   # RFC 8707 / RFC 9728: enforce that the access token is audienced to THIS
   # protected resource. When `:resource_audience` is set, the token's `aud` is
@@ -233,7 +366,8 @@ defmodule AttestoMCP.Plug.Authenticate do
   # that option (core `:origin` cannot carry a callback, an `http` development
   # origin, or a path prefix). A host-supplied `:htu` is left in place.
   defp put_pinned_htu(core, opts) do
-    if is_nil(Keyword.get(opts, :htu)) and origin_pinned?(opts) do
+    if not Keyword.has_key?(opts, :htu) and
+         (origin_pinned?(opts) or Keyword.get(opts, :allow_dynamic_origin) == true) do
       Keyword.put(core, :htu, &dpop_target_uri(&1, opts))
     else
       core
@@ -509,6 +643,8 @@ defmodule AttestoMCP.Plug.Authenticate do
   defp core_opts(opts, claims_key) do
     opts
     |> Keyword.drop([
+      :allow_dynamic_origin,
+      :allowed_hosts,
       :base_url,
       :context_key,
       :origin,

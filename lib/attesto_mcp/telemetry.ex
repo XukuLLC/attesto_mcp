@@ -69,11 +69,9 @@ defmodule AttestoMCP.Telemetry do
 
   import Plug.Conn
 
+  alias Attesto.Plug.Authenticate
+
   @outcome_key :attesto_mcp_auth_outcome
-  @sender_constraint ~w(
-    invalid_dpop_jkt invalid_mtls_thumbprint dpop_proof_required dpop_proof_unexpected
-    mtls_cert_required mtls_cert_unexpected conflicting_confirmation unsupported_confirmation
-  )
 
   @typedoc "A bounded authentication or authorization outcome."
   @type outcome ::
@@ -178,47 +176,18 @@ defmodule AttestoMCP.Telemetry do
   @spec stop_metadata(Plug.Conn.t(), atom() | nil) :: map()
   def stop_metadata(conn, sender_key \\ nil) do
     if conn.halted do
-      %{outcome: outcome(conn) || status_outcome(conn.status), status: conn.status, binding: nil}
+      %{outcome: outcome(conn) || Authenticate.classify_refusal(conn.status, %{}), status: conn.status, binding: nil}
     else
       %{outcome: :ok, status: nil, binding: binding(conn, sender_key)}
     end
   end
 
-  @doc false
-  @spec refusal_outcome(pos_integer(), map()) :: outcome()
-  def refusal_outcome(503, _body), do: :verifier_unavailable
-
-  def refusal_outcome(status, %{"error" => error} = body),
-    do: error_outcome(error, Map.get(body, "error_description"), status)
-
-  def refusal_outcome(status, _body), do: status_outcome(status)
-
-  defp error_outcome("insufficient_scope", _description, _status), do: :insufficient_scope
-  defp error_outcome("use_dpop_nonce", _description, _status), do: :dpop_nonce_required
-  defp error_outcome("invalid_dpop_proof", "replay", _status), do: :dpop_replay
-  defp error_outcome("invalid_dpop_proof", _description, _status), do: :invalid_dpop_proof
-  defp error_outcome("insufficient_user_authentication", _description, _status), do: :step_up_required
-  defp error_outcome("invalid_token", description, _status), do: token_outcome(description)
-  defp error_outcome(_error, _description, status), do: status_outcome(status)
-
-  # The core plug reports a verification failure as the verifier's reason
-  # atom in `error_description`; these are the reasons worth counting apart.
-  defp token_outcome("missing or malformed Authorization header"), do: :missing_credentials
-  defp token_outcome("expired"), do: :token_expired
-  defp token_outcome("not_yet_valid"), do: :token_not_yet_valid
-  defp token_outcome("invalid_audience"), do: :invalid_audience
-  defp token_outcome("invalid_issuer"), do: :invalid_issuer
-  defp token_outcome("request is not authenticated"), do: :unauthenticated
-
-  defp token_outcome("request was not authenticated by this protected-resource boundary"), do: :unauthenticated
-
-  defp token_outcome(reason) when reason in @sender_constraint, do: :sender_constraint_mismatch
-  defp token_outcome(_reason), do: :invalid_token
-
-  defp status_outcome(401), do: :invalid_token
-  defp status_outcome(403), do: :insufficient_scope
-  defp status_outcome(503), do: :verifier_unavailable
-  defp status_outcome(_status), do: :other
+  @doc """
+  Classify an OAuth HTTP refusal response (`status` and decoded `body`) into a
+  bounded outcome atom.
+  """
+  @spec refusal_outcome(pos_integer(), term()) :: outcome()
+  def refusal_outcome(status, body), do: Authenticate.classify_refusal(status, body)
 
   defp binding(_conn, nil), do: nil
 

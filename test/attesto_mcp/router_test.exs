@@ -189,16 +189,24 @@ defmodule AttestoMCP.RouterTest do
     end
   end
 
-  test "serves pinned protected-resource metadata with the public one-hour cache policy" do
-    for path <- [
-          "/.well-known/oauth-protected-resource/mcp/pinned",
-          "/.well-known/oauth-protected-resource/mcp/tuple"
-        ] do
-      conn = path |> build_conn() |> TestRouter.call(TestRouter.init([]))
+  test "serves statically pinned protected-resource metadata with the public one-hour cache policy" do
+    conn =
+      "/.well-known/oauth-protected-resource/mcp/pinned"
+      |> build_conn()
+      |> TestRouter.call(TestRouter.init([]))
 
-      assert conn.status == 200
-      assert get_resp_header(conn, "cache-control") == ["public, max-age=3600"]
-    end
+    assert conn.status == 200
+    assert get_resp_header(conn, "cache-control") == ["public, max-age=3600"]
+  end
+
+  test "callback-pinned metadata is not stored by shared caches" do
+    conn =
+      "/.well-known/oauth-protected-resource/mcp/tuple"
+      |> build_conn()
+      |> TestRouter.call(TestRouter.init([]))
+
+    assert conn.status == 200
+    assert get_resp_header(conn, "cache-control") == ["no-store"]
   end
 
   test "metadata built from the request Host is not stored by shared caches" do

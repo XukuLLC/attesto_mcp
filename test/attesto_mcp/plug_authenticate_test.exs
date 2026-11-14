@@ -114,6 +114,79 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
 
       refute accepted.halted
     end
+
+    test "refuses malformed :htu values at init instead of discarding the pin", %{config: config} do
+      for bad_htu <- ["https://mcp.example/mcp", {Factory, :htu}, nil] do
+        assert_raise ArgumentError, ~r/:htu must be a 1-arity function/, fn ->
+          Authenticate.init(
+            config: config,
+            resource_audience: Factory.htu(),
+            replay_check: DPoPReplay.callback(),
+            base_url: "https://mcp.example",
+            htu: bad_htu
+          )
+        end
+      end
+    end
+
+    test "requires a pinned origin, :htu, or allow_dynamic_origin with :allowed_hosts for DPoP mounts", %{
+      config: config
+    } do
+      assert_raise ArgumentError, ~r/accepts DPoP requires/, fn ->
+        Authenticate.init(
+          config: config,
+          resource_audience: Factory.htu(),
+          replay_check: DPoPReplay.callback()
+        )
+      end
+
+      assert_raise ArgumentError, ~r/:allowed_hosts/, fn ->
+        Authenticate.init(
+          config: config,
+          resource_audience: Factory.htu(),
+          replay_check: DPoPReplay.callback(),
+          allow_dynamic_origin: true
+        )
+      end
+
+      bearer_only = Authenticate.init(config: config, resource_audience: Factory.htu())
+      assert Keyword.fetch!(bearer_only, :bearer_methods) == [:header]
+    end
+
+    test "allow_dynamic_origin with :allowed_hosts admits listed hosts and refuses others", %{
+      config: config,
+      jwk: jwk,
+      token: token
+    } do
+      opts =
+        Authenticate.init(
+          config: config,
+          resource_audience: Factory.htu(),
+          replay_check: DPoPReplay.callback(),
+          allow_dynamic_origin: true,
+          allowed_hosts: ["mcp.example"]
+        )
+
+      allowed =
+        "https://mcp.example/mcp"
+        |> dpop_request(token, jwk, "https://mcp.example/mcp")
+        |> Authenticate.call(opts)
+
+      refute allowed.halted
+
+      denied =
+        "https://other.example/mcp"
+        |> dpop_request(token, jwk, "https://other.example/mcp")
+        |> Authenticate.call(opts)
+
+      assert denied.halted
+      assert denied.status == 401
+
+      assert Authenticate.host_allowed?(
+               %{host: "::1", port: 4000},
+               [" [::1]:4000 "]
+             )
+    end
   end
 
   def pinned_origin(_conn), do: "https://mcp.example"

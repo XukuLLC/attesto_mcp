@@ -106,7 +106,7 @@ defmodule AttestoMCP.Anubis.JSONSafe do
   defp json_key?(key) when is_binary(key), do: valid_json_string?(key)
   defp json_key?(_key), do: false
 
-  defp valid_json_string?(value), do: String.valid?(value) and not String.contains?(value, <<0>>)
+  defp valid_json_string?(value), do: Attesto.Claims.storable_text?(value)
 
   defp proper_list?(list) do
     _ = length(list)

@@ -49,8 +49,6 @@ defmodule AttestoMCP.Metadata do
   alias AttestoMCP.Auth
   alias AttestoMCP.Scopes
 
-  @well_known_path "/.well-known/oauth-protected-resource"
-
   @doc """
   Build an RFC 9728 protected-resource metadata document.
 
@@ -293,10 +291,9 @@ defmodule AttestoMCP.Metadata do
   @doc false
   @spec protected_resource_metadata_path(String.t()) :: String.t()
   def protected_resource_metadata_path(resource_path) do
-    case normalize_resource_path!(resource_path) do
-      "/" -> @well_known_path
-      path -> @well_known_path <> path
-    end
+    resource_path
+    |> normalize_resource_path!()
+    |> ProtectedResourceMetadata.well_known_path()
   end
 
   # An absent or `nil` option publishes every algorithm Attesto verifies. An
@@ -335,6 +332,16 @@ defmodule AttestoMCP.Metadata do
   # short-circuits its (possibly callback-bearing, possibly failing) derivation.
   defp maybe_put(opts, false, _key, _fun), do: opts
   defp maybe_put(opts, true, key, fun), do: Keyword.put(opts, key, fun.())
+
+  @doc false
+  @spec static_pin?(keyword()) :: boolean()
+  def static_pin?(opts) when is_list(opts) do
+    is_binary(Keyword.get(opts, :resource)) or
+      case origin_spec(opts) do
+        {:configured, _key, spec} -> is_binary(spec)
+        :none -> false
+      end
+  end
 
   defp escape(value) do
     value
@@ -387,12 +394,7 @@ defmodule AttestoMCP.Metadata do
   # credential-leaking `resource` / well-known URL. A port and a path prefix are
   # allowed (the latter for path-prefix proxies).
   defp validate_origin(trimmed, allow_http?) when is_boolean(allow_http?) do
-    with true <- AttestoURI.https_identifier?(trimmed, allow_http: allow_http?),
-         {:ok, %URI{query: nil}} <- URI.new(trimmed) do
-      {:ok, trimmed}
-    else
-      _ -> :error
-    end
+    if AttestoURI.issuer_identifier?(trimmed, allow_http: allow_http?), do: {:ok, trimmed}, else: :error
   end
 
   defp validate_origin(_trimmed, _allow_http?), do: :error
@@ -481,14 +483,5 @@ defmodule AttestoMCP.Metadata do
           ":authorization_servers must be a non-empty unique list of HTTPS issuer identifiers"
   end
 
-  defp valid_issuer?(issuer) when is_binary(issuer) and issuer != "" do
-    with true <- AttestoURI.https_identifier?(issuer),
-         {:ok, %URI{query: nil}} <- URI.new(issuer) do
-      true
-    else
-      _ -> false
-    end
-  end
-
-  defp valid_issuer?(_issuer), do: false
+  defp valid_issuer?(issuer), do: AttestoURI.issuer_identifier?(issuer)
 end

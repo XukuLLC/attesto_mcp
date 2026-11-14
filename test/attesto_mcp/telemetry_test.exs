@@ -359,6 +359,7 @@ defmodule AttestoMCP.TelemetryTest do
     test "maps every refusal the core plug renders to a bounded atom" do
       for {status, body, outcome} <- [
             {503, %{"error" => "temporarily_unavailable"}, :verifier_unavailable},
+            {503, %{"error" => "invalid_token"}, :verifier_unavailable},
             {403, %{"error" => "insufficient_scope"}, :insufficient_scope},
             {401, %{"error" => "use_dpop_nonce"}, :dpop_nonce_required},
             {401, %{"error" => "invalid_dpop_proof", "error_description" => "replay"}, :dpop_replay},

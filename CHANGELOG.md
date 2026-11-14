@@ -5,6 +5,33 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.7.0] - 2026-11-14
+
+Requires attesto >= 2.20.0.
+
+### Security (Breaking)
+
+- `AttestoMCP.Plug.Authenticate.init/1` and `AttestoMCP.Plug.ProtectResource.init/1`
+  / `prepare/1` now refuse to start when a mount accepts DPoP (`:replay_check` or
+  `dpop_replay_unprotected_acknowledged?: true`) without `:base_url`, `:origin`,
+  `:htu`, or `allow_dynamic_origin: true` with an explicit non-empty
+  `:allowed_hosts` allowlist. Bearer-only mounts are unaffected.
+- `AttestoMCP.Plug.Authenticate.init/1` now validates `:htu` is a 1-arity
+  function whenever supplied (including alongside `:base_url` or `:origin`),
+  raising `ArgumentError` instead of letting malformed values discard the pin.
+- `AttestoMCP.MetadataController` now emits `Cache-Control: no-store` for
+  callback-derived `:base_url` / `:origin` pins in addition to Host-derived
+  metadata; `"public, max-age=3600"` is reserved for static binary `:resource`,
+  `:base_url`, or `:origin` values.
+
+### Changed
+
+- Delegate `AttestoMCP.Telemetry.refusal_outcome/2` to
+  `Attesto.Plug.Authenticate.classify_refusal/2`, `AttestoMCP.Metadata` origin/issuer
+  and well-known path helpers to `Attesto.URI.issuer_identifier?/2` and
+  `Attesto.ProtectedResourceMetadata.well_known_path/1`, and
+  `AttestoMCP.Anubis.JSONSafe` UTF-8/NUL checks to `Attesto.Claims.storable_text?/1`.
+
 ## [2.6.0] - 2026-11-13
 
 Requires attesto >= 2.19.0 (was >= 2.13.0).
