@@ -147,6 +147,7 @@ defmodule AttestoMCP.MixProject do
       skip_code_autolink_to: [
         "AttestoMCP.Test",
         "AttestoMCP.Plug.Authenticate.init/1",
+        "AttestoMCP.Plug.ProtectResource.init/1",
         "AttestoMCP.Plug.Authenticate.metadata_www_authenticate/1",
         "AttestoMCP.Metadata.authorization_server/2",
         "AttestoMCP.Metadata.resource_metadata_param/1",
