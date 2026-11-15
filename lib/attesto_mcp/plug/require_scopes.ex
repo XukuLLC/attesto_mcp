@@ -3,8 +3,8 @@ defmodule AttestoMCP.Plug.RequireScopes do
   Require scopes on a request authenticated by `AttestoMCP.Plug.Authenticate`.
 
   The plug reads the verified scope list from `conn.assigns` and checks it with
-  `Attesto.Scope` (the same scope algebra `Attesto.Plug.RequireScopes` uses). It
-  does not encode MCP policy; routes choose their own required scopes.
+  `Attesto.Scope` (the same scope algebra `Attesto.Plug.RequireScopes` uses). Routes choose their own required scopes; the MCP profile refuses
+  `offline_access` because refresh-token privileges are not resource requirements.
 
       plug AttestoMCP.Plug.RequireScopes, scopes: [AttestoMCP.Scopes.tools_call()]
 
@@ -29,96 +29,31 @@ defmodule AttestoMCP.Plug.RequireScopes do
 
   @behaviour Plug
 
-  alias Attesto.Plug.OAuthError
-  alias Attesto.Scope
-  alias AttestoMCP.Auth
-  alias AttestoMCP.Scopes
+  alias Attesto.Plug.ResourceScopes
   alias AttestoMCP.Telemetry
 
-  @claims_key :attesto_mcp_claims
-  @scopes_key :attesto_mcp_scopes
-
   @impl Plug
-  def init(opts) when is_list(opts) do
-    keyword_opts = if Keyword.keyword?(opts), do: opts, else: []
+  def init(opts) do
+    opts = if Keyword.keyword?(opts), do: opts, else: [scopes: opts]
 
-    if Keyword.has_key?(keyword_opts, :scope) and Keyword.has_key?(keyword_opts, :scopes) do
-      raise ArgumentError, "use either :scope or :scopes, not both"
-    end
-
-    required = normalize_required(opts)
-
-    if required == [] or not Scope.valid_list?(required) or Enum.uniq(required) != required do
-      raise ArgumentError,
-            "AttestoMCP.Plug.RequireScopes requires unique RFC 6749 scope-token strings"
-    end
-
-    Scopes.reject_offline_access!(required, "AttestoMCP.Plug.RequireScopes")
-
-    hierarchy = Keyword.get(keyword_opts, :scope_hierarchy, %{})
-    catalog = Scope.new_catalog(required, hierarchy: hierarchy)
-
-    if Enum.any?(required, &String.contains?(&1, "*")) or
-         !Enum.all?(required, &Scope.known?(catalog, &1)) do
-      raise ArgumentError,
-            "AttestoMCP.Plug.RequireScopes requires concrete scopes; wildcard requirements are forbidden"
-    end
-
-    %{
-      catalog: catalog,
-      claims_key: Keyword.get(keyword_opts, :claims_key, @claims_key),
-      required: required,
-      scopes_key: Keyword.get(keyword_opts, :scopes_key, @scopes_key),
-      transport:
-        keyword_opts
-        |> Keyword.take([:send_error, :www_authenticate, :no_store, :resource_metadata, :allow_http])
+    prepared =
+      AttestoMCP.Auth.with_resource_errors(fn ->
+        opts
+        |> Keyword.put_new(:claims_key, :attesto_mcp_claims)
+        |> Keyword.put_new(:scopes_key, :attesto_mcp_scopes)
         |> Telemetry.wrap_send_error()
-    }
+        |> ResourceScopes.init()
+      end)
+
+    AttestoMCP.Scopes.reject_offline_access!(prepared.required, "AttestoMCP.Plug.RequireScopes")
+    prepared
   end
 
   @impl Plug
   def call(conn, opts) do
     Telemetry.span(:require_scopes, fn ->
-      conn = check(conn, opts)
+      conn = ResourceScopes.call(conn, opts)
       {conn, Map.take(Telemetry.stop_metadata(conn), [:outcome, :status])}
     end)
-  end
-
-  defp check(conn, opts) do
-    granted = Map.get(conn.assigns, opts.scopes_key)
-
-    cond do
-      is_list(granted) and Scope.grants_all?(opts.catalog, granted, opts.required) ->
-        conn
-
-      is_list(granted) ->
-        OAuthError.insufficient_scope(
-          conn,
-          opts.required,
-          Auth.scheme(conn.assigns[opts.claims_key]),
-          opts.transport
-        )
-
-      true ->
-        OAuthError.unauthorized(
-          conn,
-          :bearer,
-          "invalid_token",
-          Keyword.put(opts.transport, :description, "request is not authenticated")
-        )
-    end
-  end
-
-  defp normalize_required(opts) do
-    cond do
-      Keyword.keyword?(opts) and Keyword.has_key?(opts, :scope) ->
-        [Keyword.fetch!(opts, :scope)]
-
-      Keyword.keyword?(opts) ->
-        List.wrap(Keyword.get(opts, :scopes, []))
-
-      true ->
-        List.wrap(opts)
-    end
   end
 end

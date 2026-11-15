@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.9.0] - 2026-11-15
+
+### Breaking
+
+- Requires `attesto >= 2.22.0 and < 3.0.0`.
+- A resource audience derived from a pinned `:base_url` or `:origin`, and a `:resource_metadata_url`, accept `http` only on a loopback host under `allow_http: true`. A Bearer-only mount was not restricted before; a mount that accepts DPoP already was. Discovery-only metadata keeps its development `http` option.
+
+### Changed
+
+- `AttestoMCP.Plug.ProtectResource`, `AttestoMCP.Plug.Authenticate`, `AttestoMCP.Plug.RequireScopes` and `AttestoMCP.Metadata` are wrappers over the resource plugs in attesto core. Options, defaults, errors and telemetry events are unchanged, and the MCP rules stay here: the `offline_access` refusal, the MCP scope names and header-only bearer transport.
+
 ## [2.8.0] - 2026-11-15
 
 ### Breaking

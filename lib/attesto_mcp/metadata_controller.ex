@@ -34,48 +34,17 @@ if Code.ensure_loaded?(Phoenix.Controller) do
 
     use Phoenix.Controller, formats: [:json]
 
-    alias AttestoMCP.Metadata
+    alias Attesto.Plug.ResourceMetadata
 
-    @cache_max_age_seconds 3600
-
-    @doc """
-    Render protected-resource metadata for the resource bound to this route.
-    """
-    @spec show(Plug.Conn.t(), map()) :: Plug.Conn.t()
+    @doc "Render the RFC 9728 metadata for this route's MCP resource."
     def show(conn, _params) do
-      resource_path = Map.fetch!(conn.private, :attesto_mcp_resource_path)
       opts = Map.get(conn.private, :attesto_mcp_metadata_opts, [])
+      path = Map.fetch!(conn.private, :attesto_mcp_resource_path)
 
-      metadata = Metadata.protected_resource(conn, resource_path, metadata_opts(opts))
-
-      conn
-      |> Plug.Conn.put_resp_header("cache-control", cache_control(opts))
-      |> json(metadata)
-    end
-
-    # With a static binary `:resource` or `:base_url`/`:origin`, the document
-    # carries no secrets and is identical for every caller, and RFC 9728 §3.1
-    # permits caching it. With a callback pin (such as a per-tenant resolver) or
-    # request-derived `Host`, a shared cache could serve one caller's document
-    # to another, so it must not be stored.
-    defp cache_control(opts) do
-      if Metadata.static_pin?(opts),
-        do: "public, max-age=#{@cache_max_age_seconds}",
-        else: "no-store"
-    end
-
-    # `:scopes` is the ergonomic name on the router macro; the RFC 9728 field is
-    # `scopes_supported`. Translate it unless the host passed the field directly.
-    defp metadata_opts(opts) do
-      case Keyword.fetch(opts, :scopes) do
-        {:ok, scopes} ->
-          opts
-          |> Keyword.delete(:scopes)
-          |> Keyword.put_new(:scopes_supported, scopes)
-
-        :error ->
-          opts
-      end
+      ResourceMetadata.call(
+        conn,
+        Keyword.merge(opts, resource_path: path, metadata: AttestoMCP.Metadata)
+      )
     end
   end
 end
