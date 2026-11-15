@@ -165,7 +165,8 @@ defmodule AttestoMCP.Plug.ProtectResource do
     :resource_metadata,
     :allow_http,
     :claims_key,
-    :scopes_key
+    :scopes_key,
+    :scope_hierarchy
   ]
 
   @impl Plug
@@ -211,10 +212,15 @@ defmodule AttestoMCP.Plug.ProtectResource do
   defp build_protection(opts) do
     authenticate = Authenticate.init(authenticate_opts(opts))
 
+    scope_opts =
+      authenticate
+      |> Keyword.take(@shared_keys)
+      |> Keyword.merge(Keyword.take(opts, [:scope_hierarchy]))
+
     %{
       authenticate: authenticate,
       require_scopes: nil,
-      scope_opts: Keyword.take(authenticate, @shared_keys)
+      scope_opts: scope_opts
     }
   end
 
@@ -266,11 +272,13 @@ defmodule AttestoMCP.Plug.ProtectResource do
     if not Scope.valid_list?(scopes) or Enum.uniq(scopes) != scopes do
       raise ArgumentError, "dynamic scopes must be unique RFC 6749 scope-token strings"
     end
+
+    AttestoMCP.Scopes.reject_offline_access!(scopes, "AttestoMCP.Plug.ProtectResource")
   end
 
   defp authenticate_opts(opts) do
     opts
-    |> Keyword.drop(@scope_keys)
+    |> Keyword.drop(@scope_keys ++ [:scope_hierarchy])
     |> rename_resource()
   end
 

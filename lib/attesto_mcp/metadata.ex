@@ -83,6 +83,10 @@ defmodule AttestoMCP.Metadata do
 
     validate_authorization_servers!(authorization_servers)
 
+    if is_list(Keyword.get(opts, :scopes_supported)) do
+      Scopes.reject_offline_access!(Keyword.get(opts, :scopes_supported), "scopes_supported")
+    end
+
     opts
     |> put_default(:bearer_methods_supported, ["header"])
     |> put_dpop_signing_algs()

@@ -109,7 +109,8 @@ defmodule AttestoMCP.Test.Factory do
         Keyword.get(opts, :htu, @audience),
         access_token: access_token,
         now: Keyword.get_lazy(opts, :now, &DateTime.utc_now/0),
-        jti: Keyword.get_lazy(opts, :jti, fn -> "proof-" <> Integer.to_string(System.unique_integer([:positive])) end)
+        jti: Keyword.get_lazy(opts, :jti, fn -> "proof-" <> Integer.to_string(System.unique_integer([:positive])) end),
+        allow_http: Keyword.get(opts, :allow_http, false)
       )
 
     {proof, dpop_jkt(jwk)}

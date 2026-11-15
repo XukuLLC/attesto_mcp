@@ -110,6 +110,50 @@ defmodule AttestoMCP.Plug.RequireScopesTest do
            } = RequireScopes.init([scope])
   end
 
+  test "lists every scope for the current operation in one WWW-Authenticate challenge", %{config: config} do
+    token = Factory.access_token(config, scopes: [Scopes.tools_read()])
+
+    conn =
+      :post
+      |> conn("/mcp")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> Factory.authenticate(config)
+      |> require_scopes([Scopes.tools_read(), Scopes.tools_call()])
+
+    assert conn.halted
+    assert conn.status == 403
+    assert [challenge] = get_resp_header(conn, "www-authenticate")
+    assert challenge =~ ~s(error="insufficient_scope")
+    assert challenge =~ ~s(scope="mcp:tools:read mcp:tools:call")
+  end
+
+  test "accounts for declared scope hierarchies so a broader scope satisfies narrower ones", %{config: config} do
+    token = Factory.access_token(config, scopes: ["mcp:admin"])
+
+    conn =
+      :post
+      |> conn("/mcp")
+      |> put_req_header("authorization", "Bearer " <> token)
+      |> Factory.authenticate(config)
+      |> RequireScopes.call(
+        RequireScopes.init(
+          scopes: [Scopes.tools_read(), Scopes.tools_call()],
+          scope_hierarchy: %{
+            "mcp:admin" => [Scopes.tools_call()],
+            Scopes.tools_call() => [Scopes.tools_read()]
+          }
+        )
+      )
+
+    refute conn.halted
+  end
+
+  test "forbids offline_access in RequireScopes (MCP 2026-07-28)" do
+    assert_raise ArgumentError, ~r/offline_access/, fn ->
+      RequireScopes.init(scopes: ["offline_access"])
+    end
+  end
+
   defp require_scopes(conn, scopes) do
     RequireScopes.call(conn, RequireScopes.init(scopes: scopes))
   end

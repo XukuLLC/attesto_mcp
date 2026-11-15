@@ -5,6 +5,18 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.8.0] - 2026-11-15
+
+### Breaking
+
+- Requires `attesto >= 2.21.0 and < 3.0.0`.
+- `AttestoMCP.Plug.ProtectResource`, `AttestoMCP.Plug.RequireScopes` and `AttestoMCP.Metadata` raise `ArgumentError` at boot when `offline_access` is among the required scopes or in `:scopes_supported` (MCP 2026-07-28).
+- `AttestoMCP.Plug.Authenticate` raises `ArgumentError` at boot when a mount that accepts DPoP pins an `http` `:base_url` or `:origin` on a host that is not loopback. With `allow_http: true`, a loopback `http` pin now works with DPoP; before, every DPoP request on such a mount was refused.
+
+### Added
+
+- `:scope_hierarchy` on `AttestoMCP.Plug.ProtectResource` and `AttestoMCP.Plug.RequireScopes`: a map from a broader scope to the scopes it implies, so a token that holds the broader scope satisfies a narrower requirement (MCP 2026-07-28).
+
 ## [2.7.0] - 2026-11-14
 
 Requires attesto >= 2.20.0.

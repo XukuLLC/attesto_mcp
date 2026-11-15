@@ -196,14 +196,10 @@ defmodule AttestoMCP.Plug.Authenticate do
     validate_audience_policy!(opts)
     validate_resource_metadata_url!(opts)
 
-    inject_htu? = AttestoAuthenticate.accepts_dpop?(opts) and not Keyword.has_key?(opts, :htu)
-
     normalized_core_opts =
       opts
       |> core_opts(Keyword.get(opts, :claims_key, @claims_key))
-      |> maybe_put_init_htu(inject_htu?)
-      |> AttestoAuthenticate.init()
-      |> maybe_drop_init_htu(inject_htu?)
+      |> AttestoAuthenticate.normalize_options(require_dpop_pin?: false)
 
     # Retain MCP-only configuration while preserving every validation and
     # normalization performed by the core plug at pipeline initialization.
@@ -244,18 +240,6 @@ defmodule AttestoMCP.Plug.Authenticate do
     end
   end
 
-  @doc false
-  @spec unconfigured_dpop_htu!(Plug.Conn.t()) :: no_return()
-  def unconfigured_dpop_htu!(_conn) do
-    raise ArgumentError, "AttestoMCP.Plug.Authenticate requires :htu or a pinned origin when DPoP is enabled"
-  end
-
-  defp maybe_put_init_htu(core, true), do: Keyword.put(core, :htu, &__MODULE__.unconfigured_dpop_htu!/1)
-  defp maybe_put_init_htu(core, false), do: core
-
-  defp maybe_drop_init_htu(core, true), do: Keyword.delete(core, :htu)
-  defp maybe_drop_init_htu(core, false), do: core
-
   defp validate_htu_opt!(opts) do
     if Keyword.has_key?(opts, :htu) and not is_function(Keyword.get(opts, :htu), 1) do
       raise ArgumentError,
@@ -294,14 +278,33 @@ defmodule AttestoMCP.Plug.Authenticate do
   end
 
   defp validate_dpop_pin!(opts) do
-    if AttestoAuthenticate.accepts_dpop?(opts) and
-         not Keyword.has_key?(opts, :htu) and
-         not origin_pinned?(opts) and
-         Keyword.get(opts, :allow_dynamic_origin) != true do
-      raise ArgumentError,
-            "AttestoMCP.Plug.Authenticate: a mount that accepts DPoP requires :base_url, :origin, :htu, " <>
-              "or allow_dynamic_origin: true with :allowed_hosts"
+    if AttestoAuthenticate.accepts_dpop?(opts) and not Keyword.has_key?(opts, :htu) do
+      cond do
+        origin_pinned?(opts) ->
+          validate_dpop_pinned_scheme!(opts)
+
+        Keyword.get(opts, :allow_dynamic_origin) != true ->
+          raise ArgumentError,
+                "AttestoMCP.Plug.Authenticate: a mount that accepts DPoP requires :base_url, :origin, :htu, " <>
+                  "or allow_dynamic_origin: true with :allowed_hosts"
+
+        true ->
+          :ok
+      end
     end
+  end
+
+  defp validate_dpop_pinned_scheme!(opts) do
+    Enum.each([:base_url, :origin], fn key ->
+      with {:ok, value} <- Keyword.fetch(opts, key),
+           true <- is_binary(value),
+           {:ok, %URI{scheme: scheme, host: host}} when is_binary(scheme) <- URI.new(value),
+           true <- String.downcase(scheme) == "http",
+           false <- is_binary(host) and AttestoURI.loopback_host?(host) do
+        raise ArgumentError,
+              "AttestoMCP.Plug.Authenticate: #{inspect(key)} must be HTTPS or loopback HTTP when DPoP is enabled"
+      end
+    end)
   end
 
   defp valid_allowed_host?(host) when is_binary(host) do

@@ -473,4 +473,19 @@ defmodule AttestoMCP.MetadataTest do
     assert metadata["issuer"] == "https://auth.example.com"
     assert metadata["authorization_endpoint"] == "https://auth.example.com/oauth/authorize"
   end
+
+  test "forbids offline_access in protected_resource scopes_supported (MCP 2026-07-28)" do
+    refute "offline_access" in Metadata.protected_resource(
+             resource: "https://mcp.example.com/mcp",
+             authorization_servers: ["https://auth.example.com"]
+           )["scopes_supported"]
+
+    assert_raise ArgumentError, ~r/offline_access/, fn ->
+      Metadata.protected_resource(
+        resource: "https://mcp.example.com/mcp",
+        authorization_servers: ["https://auth.example.com"],
+        scopes_supported: [Scopes.tools_read(), "offline_access"]
+      )
+    end
+  end
 end

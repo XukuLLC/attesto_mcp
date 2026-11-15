@@ -45,6 +45,17 @@ defmodule AttestoMCP.Scopes do
     prefix <> ":" <> normalize(scope)
   end
 
+  @doc "Reject `offline_access` on MCP protected-resource metadata or challenges (MCP 2026-07-28)."
+  @spec reject_offline_access!([String.t()], String.t()) :: :ok
+  def reject_offline_access!(scopes, context \\ "MCP protected resource") when is_list(scopes) do
+    if "offline_access" in scopes do
+      raise ArgumentError,
+            "#{context} must not include offline_access (refresh tokens are not a resource requirement per MCP 2026-07-28)"
+    end
+
+    :ok
+  end
+
   defp normalize(:tools_read), do: tools_read()
   defp normalize(:tools_call), do: tools_call()
   defp normalize(:resources_read), do: resources_read()

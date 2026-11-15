@@ -97,6 +97,35 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
       end
     end
 
+    test "accepts loopback HTTP DPoP proofs only under allow_http and refuses non-loopback HTTP pins at init",
+         %{config: config, jwk: jwk, token: token} do
+      loopback_opts = [base_url: "http://localhost:4000", allow_http: true]
+
+      accepted =
+        "http://127.0.0.1:4000/mcp"
+        |> dpop_request(token, jwk, "http://localhost:4000/mcp", allow_http: true)
+        |> pinned_authenticate(config, loopback_opts)
+
+      refute accepted.halted
+
+      refused =
+        "http://127.0.0.1:4000/mcp"
+        |> dpop_request(token, jwk, "http://localhost:4000/mcp", allow_http: true)
+        |> pinned_authenticate(config, base_url: "https://mcp.example", allow_http: true)
+
+      assert_dpop_refused(refused)
+
+      assert_raise ArgumentError, ~r/HTTPS or loopback HTTP/, fn ->
+        Authenticate.init(
+          config: config,
+          resource_audience: Factory.htu(),
+          replay_check: DPoPReplay.callback(),
+          base_url: "http://mcp.example",
+          allow_http: true
+        )
+      end
+    end
+
     test "an explicit :htu takes precedence over the pinned origin", %{config: config, jwk: jwk, token: token} do
       opts = [base_url: "https://mcp.example", htu: &Factory.htu/1]
 
@@ -191,8 +220,8 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
 
   def pinned_origin(_conn), do: "https://mcp.example"
 
-  defp dpop_request(url, token, jwk, htu) do
-    {proof, _jkt} = Factory.dpop_proof(token, jwk: jwk, htu: htu)
+  defp dpop_request(url, token, jwk, htu, proof_opts \\ []) do
+    {proof, _jkt} = Factory.dpop_proof(token, Keyword.merge([jwk: jwk, htu: htu], proof_opts))
 
     # Plug.Test takes the request host (the `Host` header) from the URL.
     :post

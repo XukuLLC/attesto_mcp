@@ -61,7 +61,7 @@ handling used at this boundary is the same engine exercised by those suites.
 
 ## MCP authorization and metadata
 
-The MCP authorization spec treats a protected HTTP MCP server as an OAuth
+The MCP authorization spec (2026-07-28) treats a protected HTTP MCP server as an OAuth
 resource server. Clients discover authorization information through OAuth
 Protected Resource Metadata (RFC 9728), then use Authorization Server Metadata
 (RFC 8414) for issuer endpoints.
@@ -85,7 +85,7 @@ settled between it and the authorization server, and `attesto_mcp` only
 validates what arrives. It matters when choosing what to enable on the
 authorization server, so it is worth stating which way the spec has moved.
 
-The MCP authorization spec now prefers **Client ID Metadata Documents** (CIMD):
+The MCP authorization spec (2026-07-28) now prefers **Client ID Metadata Documents** (CIMD):
 the client uses an HTTPS URL as its `client_id`, and the authorization server
 dereferences that URL to a JSON metadata document. There is no registration
 request and no per-client state on the server. Dynamic client registration (RFC
@@ -182,7 +182,7 @@ either here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 2.7"}
+    {:attesto_mcp, "~> 2.8"}
   ]
 end
 ```
@@ -559,11 +559,11 @@ A stable `2.x` release. Public functions remain compatible within 2.x where
 security permits. Security and correctness fixes may tighten validation or
 derived defaults in a minor release; the CHANGELOG identifies required
 migrations and behavior changes. Pin an exact minor when unchanged behavior is
-required. Pin to `~> 2.7` for the current security boundary.
+required. Pin to `~> 2.8` for the current security boundary.
 
 ## Security notes
 
-- Deploy AttestoMCP 2.7.0 with Attesto 2.20.0 or later in the 2.x line. This
+- Deploy AttestoMCP 2.8.0 with Attesto 2.21.0 or later in the 2.x line. This
   floor supplies the shared protected-resource metadata, strict URI policy, and
   null-aware confirmation checks used directly by the MCP boundary.
 - Use HTTPS for HTTP MCP servers.

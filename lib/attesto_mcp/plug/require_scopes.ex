@@ -32,6 +32,7 @@ defmodule AttestoMCP.Plug.RequireScopes do
   alias Attesto.Plug.OAuthError
   alias Attesto.Scope
   alias AttestoMCP.Auth
+  alias AttestoMCP.Scopes
   alias AttestoMCP.Telemetry
 
   @claims_key :attesto_mcp_claims
@@ -52,7 +53,10 @@ defmodule AttestoMCP.Plug.RequireScopes do
             "AttestoMCP.Plug.RequireScopes requires unique RFC 6749 scope-token strings"
     end
 
-    catalog = Scope.new_catalog(required)
+    Scopes.reject_offline_access!(required, "AttestoMCP.Plug.RequireScopes")
+
+    hierarchy = Keyword.get(keyword_opts, :scope_hierarchy, %{})
+    catalog = Scope.new_catalog(required, hierarchy: hierarchy)
 
     if Enum.any?(required, &String.contains?(&1, "*")) or
          !Enum.all?(required, &Scope.known?(catalog, &1)) do
