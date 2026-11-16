@@ -5,6 +5,14 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.10.1] - 2026-11-15
+
+### Security
+
+- Requires `ecto >= 3.14.3 and < 4.0.0` when Ecto is present. Ecto 3.4.0
+  through 3.14.2 grow the query cache without bound from interpolated JSON
+  paths and splice lists (CVE-2026-118391).
+
 ## [2.10.0] - 2026-11-15
 
 ### Breaking

@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "2.10.0"
+  @version "2.10.1"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -75,8 +75,9 @@ defmodule AttestoMCP.MixProject do
       # `AttestoMCP.Anubis.Session` schema), a Postgres-backed
       # `Anubis.Server.Session.Store` adapter. The modules are compile-guarded on
       # `Ecto.Schema`, so a consumer that does not persist MCP sessions never
-      # compiles them and never pulls Ecto into its closure.
-      {:ecto, "~> 3.10", optional: true},
+      # compiles them and never pulls Ecto into its closure. 3.14.3 fixes
+      # CVE-2026-118391 (unbounded query cache growth).
+      {:ecto, ">= 3.14.3 and < 4.0.0", optional: true},
 
       # Optional: only needed by `AttestoMCP.Anubis.Registry.Horde`, a
       # cluster-wide `Anubis.Server.Registry` adapter. Compile-guarded on
