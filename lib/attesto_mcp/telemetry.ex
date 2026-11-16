@@ -58,6 +58,8 @@ defmodule AttestoMCP.Telemetry do
       authentication boundary had verified.
     * `:verifier_unavailable` - the verifier's dependency (JWKS, introspection)
       could not be reached, so the request was answered 503.
+    * `:principal_unavailable` - the principal callback reported a temporary
+      outage, so the request was answered 503.
     * `:other` - a refusal outside this set.
 
   ## What metadata contains
@@ -91,6 +93,7 @@ defmodule AttestoMCP.Telemetry do
           | :insufficient_scope
           | :unauthenticated
           | :verifier_unavailable
+          | :principal_unavailable
           | :other
 
   @doc """
@@ -184,7 +187,9 @@ defmodule AttestoMCP.Telemetry do
 
   @doc """
   Classify an OAuth HTTP refusal response (`status` and decoded `body`) into a
-  bounded outcome atom.
+  bounded outcome atom. A 503 envelope alone is classified as
+  `:verifier_unavailable`; `outcome/1` preserves the explicit
+  `:principal_unavailable` recorded by the principal outage hook.
   """
   @spec refusal_outcome(pos_integer(), term()) :: outcome()
   def refusal_outcome(status, body), do: Authenticate.classify_refusal(status, body)

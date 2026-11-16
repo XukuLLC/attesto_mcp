@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.11.0] - 2026-11-16
+
+### Breaking
+
+- Requires `attesto >= 2.28.0 and < 3.0.0`, whose
+  `Attesto.Plug.ResourceAuthenticate` lets the `:principal` callback return
+  `{:error, {:temporarily_unavailable, reason}}` and answers it with 503.
+- `AttestoMCP.Plug.Authenticate` records that result as
+  `:principal_unavailable` in `AttestoMCP.Telemetry.outcome/1` and the
+  `[:attesto_mcp, :authenticate, :stop]` event, apart from
+  `:verifier_unavailable` and `:policy_rejected`. A consumer that matches the
+  outcome accepts the new atom before a host returns the result.
+
 ## [2.10.1] - 2026-11-15
 
 ### Security

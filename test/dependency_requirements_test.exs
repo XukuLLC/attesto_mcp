@@ -28,11 +28,11 @@ defmodule AttestoMCP.DependencyRequirementsTest do
   test "Attesto uses the hardened-core floor and Postgrex uses its patched floor" do
     case dependency!(:attesto) do
       {:attesto, requirement} when is_binary(requirement) ->
-        assert_matches(requirement, ~w(2.26.0 2.99.0))
+        assert_matches(requirement, ~w(2.28.0 2.99.0))
 
         refute_matches(
           requirement,
-          ~w(1.12.2 1.99.0 2.4.0 2.5.0 2.6.0 2.6.1 2.10.0 2.12.0 2.13.0 2.19.0 2.19.99 2.20.0 2.20.99 2.21.0 2.21.99 2.22.0 2.25.0 2.25.99 3.0.0)
+          ~w(1.12.2 1.99.0 2.4.0 2.5.0 2.6.0 2.6.1 2.10.0 2.12.0 2.13.0 2.19.0 2.19.99 2.20.0 2.20.99 2.21.0 2.21.99 2.22.0 2.25.0 2.25.99 2.26.0 2.27.0 2.27.99 3.0.0)
         )
 
       {:attesto, opts} when is_list(opts) ->

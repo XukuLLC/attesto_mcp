@@ -182,7 +182,7 @@ either here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 2.10"}
+    {:attesto_mcp, "~> 2.11"}
   ]
 end
 ```
@@ -559,11 +559,11 @@ A stable `2.x` release. Public functions remain compatible within 2.x where
 security permits. Security and correctness fixes may tighten validation or
 derived defaults in a minor release; the CHANGELOG identifies required
 migrations and behavior changes. Pin an exact minor when unchanged behavior is
-required. Pin to `~> 2.10` for the current security boundary.
+required. Pin to `~> 2.11` for the current security boundary.
 
 ## Security notes
 
-- Deploy AttestoMCP 2.10.1 with Attesto 2.26.0 or later in the 2.x line. This
+- Deploy AttestoMCP 2.11.0 with Attesto 2.28.0 or later in the 2.x line. This
   floor supplies the shared protected-resource metadata, strict URI policy, and
   null-aware confirmation checks used directly by the MCP boundary.
 - Use HTTPS for HTTP MCP servers.

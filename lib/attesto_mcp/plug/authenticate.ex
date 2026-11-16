@@ -71,7 +71,12 @@ defmodule AttestoMCP.Plug.Authenticate do
     * `:principal` - optional callback (`(claims, sender -> ...)` or
       `{module, fun}` / `{module, fun, extra_args}`) that receives verified
       claims and sender context, returning `{:ok, principal}` or
-      `{:error, reason}`. For `{module, fun, extra_args}` callbacks (`:principal`,
+      `{:error, reason}`. The exact result
+      `{:error, {:temporarily_unavailable, reason}}` answers 503 with outcome
+      `:principal_unavailable`, no challenge, and no `Retry-After`. The reason
+      is discarded. Other rejected results answer 401. An exception the
+      callback raises reaches the host's error handling.
+      For `{module, fun, extra_args}` callbacks (`:principal`,
       `:resource_audience`, `:resource_metadata_url`), `AttestoMCP.Auth.invoke/2`
       **appends** `extra_args` after the per-call arguments
       (`apply(module, fun, call_args ++ extra_args)`).
@@ -171,6 +176,7 @@ defmodule AttestoMCP.Plug.Authenticate do
       |> Keyword.put_new(:principal_key, :attesto_mcp_principal)
       |> Keyword.put_new(:bearer_methods, [:header])
       |> Keyword.put(:policy_rejection_send_error, {Telemetry, :send_error, [host, :policy_rejected]})
+      |> Keyword.put(:principal_unavailable_send_error, {Telemetry, :send_error, [host, :principal_unavailable]})
       |> Telemetry.wrap_send_error()
       |> ResourceAuthenticate.init()
     end)

@@ -213,6 +213,47 @@ defmodule AttestoMCP.TelemetryTest do
       assert_span(:authenticate, %{outcome: :policy_rejected, status: 401, binding: nil})
     end
 
+    test "a principal outage records its own outcome exactly once, including with a host renderer", %{config: config} do
+      for custom_renderer? <- [false, true] do
+        owner = self()
+
+        extra =
+          if custom_renderer?,
+            do: [
+              send_error: fn conn, status, body ->
+                send(owner, {:rendered, Telemetry.outcome(conn), status, body})
+                conn |> send_resp(status, JSON.encode!(body)) |> halt()
+              end
+            ],
+            else: []
+
+        conn =
+          config
+          |> Factory.access_token()
+          |> bearer()
+          |> Factory.authenticate(
+            config,
+            [principal: fn _, _ -> {:error, {:temporarily_unavailable, "private-reason"}} end] ++ extra
+          )
+
+        assert conn.halted
+        assert conn.status == 503
+        assert JSON.decode!(conn.resp_body) == %{"error" => "temporarily_unavailable"}
+        assert get_resp_header(conn, "www-authenticate") == []
+        assert get_resp_header(conn, "retry-after") == []
+        assert Telemetry.outcome(conn) == :principal_unavailable
+        metadata = assert_span(:authenticate, %{outcome: :principal_unavailable, status: 503, binding: nil})
+        refute_span_leaks(metadata)
+        refute inspect(metadata) =~ "private-reason"
+
+        if custom_renderer?,
+          do: assert_receive({:rendered, :principal_unavailable, 503, %{"error" => "temporarily_unavailable"}})
+
+        refute_receive {:telemetry, _, _, _}
+        refute_receive {:rendered, _, _, _}
+      end
+    end
+
     test "a verifier outage is :verifier_unavailable", %{config: config} do
       conn =
         config
