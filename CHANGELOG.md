@@ -5,6 +5,21 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.10.0] - 2026-11-15
+
+### Breaking
+
+- Requires `attesto >= 2.26.0 and < 3.0.0`. With that release
+  `Attesto.DPoP.ReplayCache` starts only as
+  `{Attesto.DPoP.ReplayCache, single_node?: true}`; a host that supervises it
+  changes its supervision tree.
+
+### Added
+
+- The README lists the package's one `Logger.error` message, which was
+  already a fixed string, and a test fails when a `Logger.error` call under
+  `lib/` passes anything but a documented literal.
+
 ## [2.9.0] - 2026-11-15
 
 ### Breaking
