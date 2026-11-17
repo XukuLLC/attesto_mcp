@@ -90,6 +90,11 @@ plug AttestoMCP.Plug.ProtectResource,
   base_url: "https://mcp.example.com"
 ```
 
+The built-in 401 challenge also advertises the scopes the mount requires
+(RFC 6750 §3). Set `:challenge_scopes` to advertise a different list or `[]`
+to omit the `scope` parameter. Standalone `AttestoMCP.Plug.Authenticate` only
+advertises scopes when `:challenge_scopes` supplies them.
+
 With the origin pinned you do **not** need a bespoke canonical-host guard plug in
 front of the metadata routes: a spoofed `Host`/`X-Forwarded-Host` can no longer
 change the advertised `resource`, challenge URL, or `authorization_servers`.
@@ -136,3 +141,14 @@ may still derive its `resource` from the connection. The authorization server
 always requires an explicit source. `resource_audience: :resource` cannot use
 request derivation and requires the same canonical pin on the plug and metadata
 route.
+
+## Browser origins
+
+For MCP Streamable HTTP, `AttestoMCP.Plug.Authenticate` and
+`AttestoMCP.Plug.ProtectResource` validate `Origin` before authentication. A
+browser on the pinned resource origin can use the mount directly. For a browser
+served from a different origin, add its serialized origin to `:allowed_origins`,
+for example `allowed_origins: ["https://console.example.com"]`. Use the scheme,
+host, and optional port (RFC 6454 §6.2). Unpinned mounts accept only listed
+origins, except in dynamic mode with an allowed `Host`. Requests without
+`Origin` continue through authentication. Discovery routes remain public.

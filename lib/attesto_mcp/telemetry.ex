@@ -53,6 +53,8 @@ defmodule AttestoMCP.Telemetry do
       step-up requirement.
     * `:policy_rejected` - the host's `:principal` callback refused the
       verified claims.
+    * `:forbidden_origin` - the MCP request's `Origin` failed validation
+      before authentication.
     * `:insufficient_scope` - the token lacks a required scope.
     * `:unauthenticated` - a scope check ran on a connection no
       authentication boundary had verified.
@@ -90,6 +92,7 @@ defmodule AttestoMCP.Telemetry do
           | :dpop_nonce_required
           | :step_up_required
           | :policy_rejected
+          | :forbidden_origin
           | :insufficient_scope
           | :unauthenticated
           | :verifier_unavailable
@@ -192,6 +195,7 @@ defmodule AttestoMCP.Telemetry do
   `:principal_unavailable` recorded by the principal outage hook.
   """
   @spec refusal_outcome(pos_integer(), term()) :: outcome()
+  def refusal_outcome(403, %{"error" => "forbidden_origin"}), do: :forbidden_origin
   def refusal_outcome(status, body), do: Authenticate.classify_refusal(status, body)
 
   defp binding(_conn, nil), do: nil
@@ -210,6 +214,13 @@ defmodule AttestoMCP.Telemetry do
 
   defp deliver_error(conn, status, body, {module, fun, extra}) when is_atom(module) and is_atom(fun) and is_list(extra),
     do: apply(module, fun, [conn, status, body | extra])
+
+  defp deliver_error(conn, 403, %{"error" => "forbidden_origin"}, _none) do
+    conn
+    |> put_resp_content_type("text/plain")
+    |> send_resp(403, "forbidden origin")
+    |> halt()
+  end
 
   # The core plug's default envelope, reproduced so a host without a hook
   # gets the same response it always has.

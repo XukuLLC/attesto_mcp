@@ -125,6 +125,12 @@ defmodule AttestoMCP.Plug.ProtectResource do
   `:trusted_audiences`, `:htu`, `:credential_from_conn`, `:bearer_methods`, `:send_error`,
   `:www_authenticate`, `:no_store`, `:principal`, `:principal_key`,
   `:claims_key`, `:scopes_key`, `:sender_key`, and `:resource_metadata_url`.
+  `:allowed_origins` adds trusted browser origins to this mount. See the
+  Origin validation rules in `AttestoMCP.Plug.Authenticate`.
+  `:challenge_scopes` defaults to the configured `:scopes` or `:scope` and
+  accepts an explicit list or callback as in `AttestoMCP.Plug.Authenticate`.
+  Set it to `[]` to omit `scope` from the built-in 401 challenge. A split
+  boundary prepared with `prepare/1` has no static scope default.
   MCP defaults to `bearer_methods: [:header]`; set
   `bearer_methods: [:header, :body]` only when the resource intentionally
   accepts RFC 6750 §2.2 form-body access tokens. The transport hooks
@@ -146,7 +152,14 @@ defmodule AttestoMCP.Plug.ProtectResource do
   @adapters [authenticate: Authenticate, require_scopes: RequireScopes]
 
   @impl Plug
-  def init(opts), do: ProtectResource.init(rename_resource(opts), @adapters)
+  def init(opts) do
+    opts
+    |> rename_resource()
+    |> Keyword.put_new_lazy(:challenge_scopes, fn ->
+      List.wrap(Keyword.get(opts, :scope, opts[:scopes]))
+    end)
+    |> ProtectResource.init(@adapters)
+  end
 
   @impl Plug
   defdelegate call(conn, protection), to: ProtectResource

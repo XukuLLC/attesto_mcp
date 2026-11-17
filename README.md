@@ -182,7 +182,7 @@ either here.
 ```elixir
 def deps do
   [
-    {:attesto_mcp, "~> 2.11"}
+    {:attesto_mcp, "~> 2.12"}
   ]
 end
 ```
@@ -422,7 +422,7 @@ Every `AttestoMCP.Plug.Authenticate` call (and so every
 `AttestoMCP.Plug.RequireScopes` decision inside `[:attesto_mcp, :require_scopes]`.
 The `:stop` event's `:outcome` is one atom from a bounded set, such as
 `:missing_credentials`, `:token_expired`, `:invalid_audience`,
-`:sender_constraint_mismatch`, `:dpop_replay`, `:insufficient_scope`, or
+`:sender_constraint_mismatch`, `:dpop_replay`, `:forbidden_origin`, `:insufficient_scope`, or
 `:verifier_unavailable`, with the refusal's HTTP `:status` and, for an
 authenticated request, its `:binding`. Tokens, claims, principals, scopes, and
 error descriptions never enter the metadata. `AttestoMCP.Telemetry` lists the
@@ -559,11 +559,11 @@ A stable `2.x` release. Public functions remain compatible within 2.x where
 security permits. Security and correctness fixes may tighten validation or
 derived defaults in a minor release; the CHANGELOG identifies required
 migrations and behavior changes. Pin an exact minor when unchanged behavior is
-required. Pin to `~> 2.11` for the current security boundary.
+required. Pin to `~> 2.12` for the current security boundary.
 
 ## Security notes
 
-- Deploy AttestoMCP 2.11.1 with Attesto 2.28.0 or later in the 2.x line. This
+- Deploy AttestoMCP 2.12.0 with Attesto 2.29.0 or later in the 2.x line. This
   floor supplies the shared protected-resource metadata, strict URI policy, and
   null-aware confirmation checks used directly by the MCP boundary.
 - Use HTTPS for HTTP MCP servers.

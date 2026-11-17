@@ -68,6 +68,39 @@ defmodule AttestoMCP.TelemetryTest do
   end
 
   describe "[:attesto_mcp, :authenticate]" do
+    test "a forbidden Origin uses the host envelope before verification and records one refusal", %{config: config} do
+      origin = "https://private-origin.example"
+
+      protection =
+        ProtectResource.init(
+          config: config,
+          resource_audience: Factory.htu(),
+          scopes: [Scopes.tools_call()],
+          verify: fn _, _, _ -> flunk("verifier ran for a forbidden origin") end,
+          www_authenticate: fn _, _ -> flunk("challenge renderer ran for a forbidden origin") end,
+          send_error: fn conn, status, body -> send_resp(conn, status, JSON.encode!(%{"host_error" => body})) end
+        )
+
+      response =
+        "private-token"
+        |> bearer()
+        |> put_req_header("origin", origin)
+        |> put_resp_header("www-authenticate", "Bearer")
+        |> ProtectResource.call(protection)
+
+      assert response.halted
+      assert response.status == 403
+      assert JSON.decode!(response.resp_body) == %{"host_error" => %{"error" => "forbidden_origin"}}
+      assert ["no-store"] == get_resp_header(response, "cache-control")
+      assert [] == get_resp_header(response, "www-authenticate")
+      refute inspect(response.resp_headers) =~ origin
+      assert Telemetry.outcome(response) == :forbidden_origin
+      assert Telemetry.refusal_outcome(403, %{"error" => "forbidden_origin"}) == :forbidden_origin
+      metadata = assert_span(:authenticate, %{outcome: :forbidden_origin, status: 403, binding: nil})
+      refute inspect(metadata) =~ origin
+      refute_receive {:telemetry, _, _, _}, 0
+    end
+
     test "an authenticated bearer request stops with :ok and its binding", %{config: config} do
       conn = config |> Factory.access_token() |> bearer() |> Factory.authenticate(config)
 

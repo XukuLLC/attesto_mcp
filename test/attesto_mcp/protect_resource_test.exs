@@ -5,6 +5,7 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
   import Plug.Conn
   import Plug.Test
 
+  alias Attesto.Plug.OAuthError
   alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Plug.ProtectResource
   alias AttestoMCP.Scopes
@@ -464,6 +465,30 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     assert conn.halted
     assert [challenge] = get_resp_header(conn, "www-authenticate")
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/brokers")
+  end
+
+  test "401 challenges advertise the required scopes unless explicitly overridden", %{config: config} do
+    for {opts, scopes} <- [
+          {[scopes: ["tools.call", "resources.read"]], ["tools.call", "resources.read"]},
+          {[scope: "tools.call"], ["tools.call"]},
+          {[scopes: "tools.call"], ["tools.call"]},
+          {[scopes: ["tools.call", "tools.read"]], ["tools.call", "tools.read"]},
+          {[scope: "tools.call", challenge_scopes: ["tools.discover"]], ["tools.discover"]},
+          {[scope: "tools.call", challenge_scopes: fn _conn -> ["tools.discover"] end], ["tools.discover"]},
+          {[scope: "tools.call", challenge_scopes: []], []}
+        ] do
+      protection = ProtectResource.init([config: config, resource_audience: Factory.htu()] ++ opts)
+      assert protection.authenticate[:challenge_scopes] == Keyword.get(opts, :challenge_scopes, scopes)
+
+      request = conn(:post, "/mcp")
+      response = ProtectResource.call(request, protection)
+      assert response.status == 401
+      assert [challenge] = get_resp_header(response, "www-authenticate")
+
+      reference = OAuthError.missing_credentials(request, challenge_scopes: scopes)
+      assert [reference_challenge] = get_resp_header(reference, "www-authenticate")
+      assert Regex.scan(~r/\bscope="[^"]*"/, challenge) == Regex.scan(~r/\bscope="[^"]*"/, reference_challenge)
+    end
   end
 
   test "the deprecated :resource path alias remains compatible", %{config: config} do

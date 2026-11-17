@@ -5,6 +5,33 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.12.0] - 2026-11-17
+
+### Breaking
+
+- Requires `attesto >= 2.29.0 and < 3.0.0`, whose resource plugs accept
+  `:challenge_scopes`.
+- `AttestoMCP.Plug.Authenticate` and `AttestoMCP.Plug.ProtectResource` now
+  check the request `Origin` before authentication and refuse a browser page
+  on another origin with HTTP 403 unless its origin is listed in
+  `:allowed_origins`. The MCP Streamable HTTP transport requires servers to
+  validate `Origin` against DNS rebinding and to answer 403 to an invalid one
+  (2025-06-18, 2025-11-25 and 2026-07-28). On mounts without a pinned origin
+  or `allow_dynamic_origin: true`, list every accepted browser origin.
+- An Origin refusal records `:forbidden_origin` in
+  `AttestoMCP.Telemetry.outcome/1` and the
+  `[:attesto_mcp, :authenticate, :stop]` event. Consumers that exhaustively
+  match outcomes must accept the new atom.
+
+### Added
+
+- `AttestoMCP.Plug.Authenticate.origin_allowed?/2` applies the initialized
+  origin policy for HTTP transports that check it before authentication.
+- `AttestoMCP.Plug.Authenticate` and `AttestoMCP.Plug.ProtectResource` accept
+  `:challenge_scopes` for built-in 401 challenges (RFC 6750 §3).
+  `AttestoMCP.Plug.ProtectResource` defaults to its required scopes. An
+  explicit `:challenge_scopes` replaces that default.
+
 ## [2.11.1] - 2026-11-17
 
 ### Security

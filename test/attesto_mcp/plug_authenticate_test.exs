@@ -6,6 +6,7 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
   import Plug.Test
 
   alias Anubis.Server.Frame
+  alias Attesto.Plug.OAuthError
   alias Attesto.StepUp.Requirement
   alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Test.DPoPReplay
@@ -15,6 +16,125 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
 
   setup do
     %{config: Factory.config()}
+  end
+
+  test "Authenticate advertises challenge scopes only when configured", %{config: config} do
+    request = conn(:post, "/mcp")
+    default = Factory.authenticate(request, config)
+    assert default.status == 401
+    assert [challenge] = get_resp_header(default, "www-authenticate")
+    refute challenge =~ "scope="
+
+    scopes = ["tools.call"]
+    opts = Authenticate.init(config: config, resource_audience: Factory.htu(), challenge_scopes: scopes)
+    assert opts[:challenge_scopes] == scopes
+
+    configured = Authenticate.call(request, opts)
+    assert configured.status == 401
+    assert [configured_challenge] = get_resp_header(configured, "www-authenticate")
+
+    reference = OAuthError.missing_credentials(request, challenge_scopes: scopes)
+    assert [reference_challenge] = get_resp_header(reference, "www-authenticate")
+    assert Regex.scan(~r/\bscope="[^"]*"/, configured_challenge) == Regex.scan(~r/\bscope="[^"]*"/, reference_challenge)
+  end
+
+  describe "Streamable HTTP Origin validation" do
+    test "accepts a normalized pinned or listed origin behind a proxy", %{config: config} do
+      token = Factory.access_token(config)
+
+      for origin <- ["https://mcp.example", "HTTP://CLIENT.example:80", "http://[::1]:4000"] do
+        response =
+          :post
+          |> conn("http://proxy.internal:8080/mcp")
+          |> put_req_header("authorization", "Bearer " <> token)
+          |> put_req_header("origin", origin)
+          |> Factory.authenticate(config,
+            base_url: "HTTPS://MCP.example:443/prefix",
+            allowed_origins: ["http://client.example", "http://[::1]:4000"]
+          )
+
+        refute response.halted
+      end
+    end
+
+    test "refuses foreign, malformed, duplicate, and null origins", %{config: config} do
+      invalid_origins = [
+        ["https://foreign.example"],
+        ["https://mcp.example/"],
+        ["https://mcp.example:65536"],
+        ["https://mcp.example:"],
+        ["https://user@mcp.example"],
+        ["https://mcp.example?x"],
+        ["https://mcp.example#x"],
+        ["https://mcp.example, https://foreign.example"],
+        ["https://mcp.example https://foreign.example"],
+        ["https://mcp.example", "https://mcp.example"],
+        ["null"]
+      ]
+
+      for values <- invalid_origins do
+        request = %{conn(:post, "/mcp") | req_headers: Enum.map(values, &{"origin", &1})}
+        response = Factory.authenticate(request, config, base_url: "https://mcp.example")
+        assert_forbidden_origin(response)
+      end
+    end
+
+    test "an unpinned mount trusts only the allowlist when Origin is present", %{config: config} do
+      request =
+        :post
+        |> conn("https://mcp.example/mcp")
+        |> put_req_header("authorization", "Bearer " <> Factory.access_token(config))
+
+      refute Factory.authenticate(request, config).halted
+
+      origin_request = put_req_header(request, "origin", "https://mcp.example")
+      assert_forbidden_origin(Factory.authenticate(origin_request, config))
+      refute Factory.authenticate(origin_request, config, allowed_origins: ["https://mcp.example"]).halted
+    end
+
+    test "dynamic mode derives the expected origin only from an allowed Host", %{config: config} do
+      opts = [allow_dynamic_origin: true, allowed_hosts: ["localhost:4000"]]
+      token = Factory.access_token(config)
+
+      for host <- ["localhost:4000", "localhost:4001", "rebound.example:4000"] do
+        origin = "http://" <> host
+
+        response =
+          :post
+          |> conn(origin <> "/mcp")
+          |> put_req_header("authorization", "Bearer " <> token)
+          |> put_req_header("origin", origin)
+          |> Factory.authenticate(config, opts)
+
+        if host == "localhost:4000", do: refute(response.halted), else: assert_forbidden_origin(response)
+      end
+    end
+
+    test "validates the configured allowlist at initialization", %{config: config} do
+      for invalid <- [nil, "https://mcp.example", [42], ["null"], ["file://host"], ["https://mcp.example/"]] do
+        assert_raise ArgumentError, ~r/:allowed_origins/, fn ->
+          Authenticate.init(config: config, resource_audience: Factory.htu(), allowed_origins: invalid)
+        end
+      end
+    end
+
+    test "a failing pinned-origin resolver refuses without disclosing the failure", %{config: config} do
+      response =
+        :post
+        |> conn("https://mcp.example/mcp")
+        |> put_req_header("origin", "https://mcp.example")
+        |> Factory.authenticate(config, base_url: fn _conn -> raise "private callback failure" end)
+
+      assert_forbidden_origin(response)
+    end
+
+    defp assert_forbidden_origin(response) do
+      assert response.halted
+      assert response.status == 403
+      assert response.resp_body == "forbidden origin"
+      assert ["no-store"] == get_resp_header(response, "cache-control")
+      assert [] == get_resp_header(response, "www-authenticate")
+    end
   end
 
   describe "DPoP target URI with a pinned origin" do

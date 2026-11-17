@@ -92,6 +92,11 @@ defmodule AttestoMCP.Plug.Authenticate do
       must append its own `resource_metadata` if wanted. Literal URLs are
       validated at initialization. Invalid callback results are omitted and
       logged once without including the invalid value.
+    * `:challenge_scopes` - a list of RFC 6749 §3.3 scope tokens or a callback
+      as in `Attesto.Plug.OAuthError.unauthorized/4`. A non-empty list adds
+      one `scope` parameter to the built-in 401 challenge (RFC 6750 §3).
+      Defaults to `[]`. A custom `:www_authenticate` replaces challenge
+      handling entirely and receives no `scope` from this option.
     * `:resource_path` - MCP endpoint path used to derive
       `:resource_metadata_url`. Its origin is resolved by
       `AttestoMCP.Metadata.resolve_origin/2`, so a pinned origin applies.
@@ -115,9 +120,25 @@ defmodule AttestoMCP.Plug.Authenticate do
       development endpoints.
     * `:allowed_hosts` - non-empty list of host or `host:port` strings allowed
       when `allow_dynamic_origin: true` is configured. Requests for any other
-      `Host` are refused with HTTP 401 (`invalid_token`).
+      `Host` that pass `Origin` validation are refused with HTTP 401 (`invalid_token`).
+    * `:allowed_origins` - additional browser origins accepted on this mount.
+      Each entry must be a serialized HTTP(S) origin (RFC 6454 §6.2), with
+      a host and optional port. Initialization lowercases the scheme and host
+      and removes the default port. Defaults to `[]`.
     * `:allow_http` - permit an HTTP `resource_metadata` URL only for a loopback
       development endpoint. HTTPS remains the default.
+
+  ## Origin validation
+
+  The MCP Streamable HTTP transport requires checking the request `Origin`
+  before authentication to prevent DNS rebinding. Requests without `Origin`
+  continue. A single serialized origin must match the pinned resource origin,
+  the request origin in dynamic mode with an allowed host, or `:allowed_origins`.
+  When the mount has no pin and dynamic mode is disabled, only
+  `:allowed_origins` is trusted. Duplicate headers, `null`, malformed values,
+  and unmatched origins receive 403 with `cache-control: no-store`. A host's
+  `:send_error` hook receives the `forbidden_origin` error code. The default
+  response body is plain text `forbidden origin`.
 
   ## DPoP target URI
 
@@ -161,15 +182,22 @@ defmodule AttestoMCP.Plug.Authenticate do
 
   @behaviour Plug
 
+  import Plug.Conn
+
   alias Attesto.Plug.ResourceAuthenticate
+  alias Attesto.ResourceContext
+  alias Attesto.URI, as: AttestoURI
+  alias AttestoMCP.Metadata
   alias AttestoMCP.Telemetry
 
   @impl Plug
   def init(opts) do
     host = Keyword.get(opts, :send_error)
+    allowed_origins = normalize_allowed_origins!(Keyword.get(opts, :allowed_origins, []))
 
     AttestoMCP.Auth.with_resource_errors(fn ->
       opts
+      |> Keyword.delete(:allowed_origins)
       |> Keyword.put_new(:claims_key, :attesto_mcp_claims)
       |> Keyword.put_new(:scopes_key, :attesto_mcp_scopes)
       |> Keyword.put_new(:sender_key, :attesto_mcp_sender)
@@ -179,16 +207,91 @@ defmodule AttestoMCP.Plug.Authenticate do
       |> Keyword.put(:principal_unavailable_send_error, {Telemetry, :send_error, [host, :principal_unavailable]})
       |> Telemetry.wrap_send_error()
       |> ResourceAuthenticate.init()
+      |> Keyword.put(:allowed_origins, allowed_origins)
     end)
   end
 
   @impl Plug
   def call(conn, opts) do
     Telemetry.span(:authenticate, fn ->
-      conn = conn |> Telemetry.put_outcome(nil) |> ResourceAuthenticate.call(opts)
+      conn = Telemetry.put_outcome(conn, nil)
+      conn = if origin_allowed?(conn, opts), do: ResourceAuthenticate.call(conn, opts), else: refuse_origin(conn, opts)
       conn = if conn.halted, do: conn, else: Telemetry.put_outcome(conn, :ok)
       {conn, Telemetry.stop_metadata(conn, Keyword.get(opts, :sender_key, :attesto_mcp_sender))}
     end)
+  end
+
+  @doc """
+  Checks a request's `Origin` against the origin policy prepared by `init/1`.
+
+  An absent header is accepted. A present header must be a single serialized
+  HTTP(S) origin matching the resolved resource origin or a configured
+  `:allowed_origins` entry after normalization. Without an origin pin or an
+  allowed dynamic Host, only the explicit list can match a present header.
+  """
+  @spec origin_allowed?(Plug.Conn.t(), keyword()) :: boolean()
+  def origin_allowed?(conn, opts) do
+    case get_req_header(conn, "origin") do
+      [] ->
+        true
+
+      [value] ->
+        case normalize_origin(value) do
+          {:ok, origin} -> origin in Keyword.get(opts, :allowed_origins, []) or origin == resource_origin(conn, opts)
+          :error -> false
+        end
+
+      _duplicates ->
+        false
+    end
+  end
+
+  defp resource_origin(conn, opts) do
+    if Keyword.has_key?(opts, :base_url) or Keyword.has_key?(opts, :origin) or
+         (opts[:allow_dynamic_origin] == true and host_allowed?(conn, opts[:allowed_hosts])) do
+      with {:ok, origin} <- conn |> Metadata.resolve_origin(opts) |> AttestoURI.origin(), do: origin
+    end
+  rescue
+    _exception -> nil
+  catch
+    _kind, _reason -> nil
+  end
+
+  defp normalize_allowed_origins!(values) when is_integer(length(values)) do
+    Enum.map(values, fn value ->
+      case normalize_origin(value) do
+        {:ok, origin} -> origin
+        :error -> raise_invalid_allowed_origins!()
+      end
+    end)
+  end
+
+  defp normalize_allowed_origins!(_values), do: raise_invalid_allowed_origins!()
+
+  defp raise_invalid_allowed_origins! do
+    raise ArgumentError, ":allowed_origins must be a list of serialized HTTP(S) origins"
+  end
+
+  defp normalize_origin(value) do
+    with true <- AttestoURI.origin?(value, allow_http: true),
+         {:ok, %URI{path: nil}} <- URI.new(value),
+         {:ok, origin} <- AttestoURI.origin(value) do
+      {:ok, origin}
+    else
+      _invalid -> :error
+    end
+  end
+
+  defp refuse_origin(conn, opts) do
+    conn =
+      conn
+      |> delete_resp_header("www-authenticate")
+      |> put_resp_header("cache-control", "no-store")
+
+    opts
+    |> Keyword.fetch!(:send_error)
+    |> ResourceContext.invoke([conn, 403, %{"error" => "forbidden_origin"}])
+    |> halt()
   end
 
   @doc false
