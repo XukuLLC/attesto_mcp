@@ -2,11 +2,11 @@ defmodule AttestoMCP.DependencyRequirementsTest do
   @moduledoc false
   use ExUnit.Case, async: true
 
-  test "Plug admits every supported fixed branch and rejects affected predecessors" do
+  test "Plug admits the multipart length fix and rejects every earlier release" do
     requirement = requirement!(:plug)
 
-    assert_matches(requirement, ~w(1.16.6 1.17.4 1.18.5 1.19.5 1.20.3 1.99.0))
-    refute_matches(requirement, ~w(1.16.5 1.17.3 1.18.4 1.19.4 1.20.2 2.0.0))
+    assert_matches(requirement, ~w(1.20.4 1.99.0))
+    refute_matches(requirement, ~w(1.16.6 1.17.4 1.18.5 1.19.5 1.20.3 2.0.0))
   end
 
   test "optional integrations retain their tested floors and next-major caps" do

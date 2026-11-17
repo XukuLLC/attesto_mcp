@@ -563,7 +563,7 @@ required. Pin to `~> 2.11` for the current security boundary.
 
 ## Security notes
 
-- Deploy AttestoMCP 2.11.0 with Attesto 2.28.0 or later in the 2.x line. This
+- Deploy AttestoMCP 2.11.1 with Attesto 2.28.0 or later in the 2.x line. This
   floor supplies the shared protected-resource metadata, strict URI policy, and
   null-aware confirmation checks used directly by the MCP boundary.
 - Use HTTPS for HTTP MCP servers.
