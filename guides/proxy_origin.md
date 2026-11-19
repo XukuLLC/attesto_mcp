@@ -90,10 +90,13 @@ plug AttestoMCP.Plug.ProtectResource,
   base_url: "https://mcp.example.com"
 ```
 
-The built-in 401 challenge also advertises the scopes the mount requires
-(RFC 6750 §3). Set `:challenge_scopes` to advertise a different list or `[]`
-to omit the `scope` parameter. Standalone `AttestoMCP.Plug.Authenticate` only
-advertises scopes when `:challenge_scopes` supplies them.
+`:challenge_scopes` defaults to `[]` on `AttestoMCP.Plug.ProtectResource`
+and `AttestoMCP.Plug.Authenticate`, so the built-in 401 challenge omits
+`scope` (RFC 6750 §3). Advertising the mount's required scopes can limit
+clients to the route minimum because they fall back to `scopes_supported`
+only when the challenge omits `scope`. Pass an explicit list or callback in
+`:challenge_scopes` to advertise scopes.
+[MCP Authorization, Scope Selection Strategy](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#scope-selection-strategy)
 
 With the origin pinned you do **not** need a bespoke canonical-host guard plug in
 front of the metadata routes: a spoofed `Host`/`X-Forwarded-Host` can no longer

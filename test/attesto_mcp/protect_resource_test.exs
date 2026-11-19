@@ -5,12 +5,15 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
   import Plug.Conn
   import Plug.Test
 
-  alias Attesto.Plug.OAuthError
+  alias AttestoMCP.Metadata
   alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Plug.ProtectResource
   alias AttestoMCP.Scopes
   alias AttestoMCP.Test.DPoPReplay
   alias AttestoMCP.Test.Factory
+
+  @metadata_challenge ~s(Bearer error="invalid_token", error_description="missing or malformed Authorization header", ) <>
+                        ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
 
   setup do
     %{config: Factory.config()}
@@ -467,28 +470,58 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     assert challenge =~ ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp/brokers")
   end
 
-  test "401 challenges advertise the required scopes unless explicitly overridden", %{config: config} do
-    for {opts, scopes} <- [
-          {[scopes: ["tools.call", "resources.read"]], ["tools.call", "resources.read"]},
-          {[scope: "tools.call"], ["tools.call"]},
-          {[scopes: "tools.call"], ["tools.call"]},
-          {[scopes: ["tools.call", "tools.read"]], ["tools.call", "tools.read"]},
-          {[scope: "tools.call", challenge_scopes: ["tools.discover"]], ["tools.discover"]},
-          {[scope: "tools.call", challenge_scopes: fn _conn -> ["tools.discover"] end], ["tools.discover"]},
-          {[scope: "tools.call", challenge_scopes: []], []}
-        ] do
-      protection = ProtectResource.init([config: config, resource_audience: Factory.htu()] ++ opts)
-      assert protection.authenticate[:challenge_scopes] == Keyword.get(opts, :challenge_scopes, scopes)
+  test "required scopes leave the default 401 challenge byte-identical to 2.11.1", %{config: config} do
+    request = conn(:post, "https://mcp.example.com/mcp")
 
-      request = conn(:post, "/mcp")
-      response = ProtectResource.call(request, protection)
+    for opts <- [[scopes: ["tools.call", "resources.read"]], [scope: "tools.call"], [scopes: "tools.call"]] do
+      response = protect(request, config, [resource_path: "/mcp"] ++ opts)
       assert response.status == 401
-      assert [challenge] = get_resp_header(response, "www-authenticate")
-
-      reference = OAuthError.missing_credentials(request, challenge_scopes: scopes)
-      assert [reference_challenge] = get_resp_header(reference, "www-authenticate")
-      assert Regex.scan(~r/\bscope="[^"]*"/, challenge) == Regex.scan(~r/\bscope="[^"]*"/, reference_challenge)
+      assert get_resp_header(response, "www-authenticate") == [@metadata_challenge]
     end
+  end
+
+  test "a prepared boundary sends the metadata challenge by default", %{config: config} do
+    response =
+      :post
+      |> conn("https://mcp.example.com/mcp")
+      |> ProtectResource.authenticate(dynamic_protection(config))
+
+    assert response.status == 401
+    assert get_resp_header(response, "www-authenticate") == [@metadata_challenge]
+  end
+
+  test "static and prepared boundaries advertise explicitly configured challenge scopes", %{config: config} do
+    request = conn(:post, "https://mcp.example.com/mcp")
+    callback = fn %Plug.Conn{request_path: "/mcp"} -> ["tools.discover"] end
+
+    for {scopes, suffix} <- [{["a", "b"], ~s(, scope="a b")}, {[], ""}, {callback, ~s(, scope="tools.discover")}] do
+      static = protect(request, config, scopes: ["tools.call"], resource_path: "/mcp", challenge_scopes: scopes)
+      prepared = ProtectResource.authenticate(request, dynamic_protection(config, challenge_scopes: scopes))
+
+      for response <- [static, prepared] do
+        assert response.status == 401
+        assert get_resp_header(response, "www-authenticate") == [@metadata_challenge <> suffix]
+      end
+    end
+  end
+
+  test "MCP clients select all metadata scopes when the 401 challenge omits scope", %{config: config} do
+    request = conn(:post, "https://mcp.example.com/mcp")
+    supported = ["mcp:tools", "mcp:tools:reports", "mcp:tools:billing"]
+
+    metadata =
+      Metadata.protected_resource(
+        resource: "https://mcp.example.com/mcp",
+        authorization_servers: ["https://auth.example.com"],
+        scopes_supported: supported
+      )
+
+    opts = [scopes: ["mcp:tools"], resource_path: "/mcp"]
+    response = protect(request, config, opts)
+    assert requested_scopes(response, metadata) == supported
+
+    response = protect(request, config, opts ++ [challenge_scopes: ["mcp:tools"]])
+    assert requested_scopes(response, metadata) == ["mcp:tools"]
   end
 
   test "the deprecated :resource path alias remains compatible", %{config: config} do
@@ -1024,6 +1057,15 @@ defmodule AttestoMCP.Plug.ProtectResourceTest do
     signed = JOSE.JWT.sign(key, header, Map.put(claims, "aud", audience))
     {_jws, compact} = JOSE.JWS.compact(signed)
     compact
+  end
+
+  defp requested_scopes(%Plug.Conn{status: 401} = response, metadata) do
+    [challenge] = get_resp_header(response, "www-authenticate")
+
+    case Regex.run(~r/(?:^Bearer |, )scope="([^"]*)"/, challenge) do
+      [_, scopes] -> String.split(scopes, " ", trim: true)
+      nil -> metadata["scopes_supported"]
+    end
   end
 
   defp protect(conn, config, opts) do

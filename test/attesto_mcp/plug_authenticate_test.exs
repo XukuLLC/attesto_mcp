@@ -6,7 +6,6 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
   import Plug.Test
 
   alias Anubis.Server.Frame
-  alias Attesto.Plug.OAuthError
   alias Attesto.StepUp.Requirement
   alias AttestoMCP.Plug.Authenticate
   alias AttestoMCP.Test.DPoPReplay
@@ -19,23 +18,19 @@ defmodule AttestoMCP.Plug.AuthenticateTest do
   end
 
   test "Authenticate advertises challenge scopes only when configured", %{config: config} do
-    request = conn(:post, "/mcp")
-    default = Factory.authenticate(request, config)
+    request = conn(:post, "https://mcp.example.com/mcp")
+
+    metadata_challenge =
+      ~s(Bearer error="invalid_token", error_description="missing or malformed Authorization header", ) <>
+        ~s(resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp")
+
+    default = Factory.authenticate(request, config, resource_path: "/mcp")
     assert default.status == 401
-    assert [challenge] = get_resp_header(default, "www-authenticate")
-    refute challenge =~ "scope="
+    assert get_resp_header(default, "www-authenticate") == [metadata_challenge]
 
-    scopes = ["tools.call"]
-    opts = Authenticate.init(config: config, resource_audience: Factory.htu(), challenge_scopes: scopes)
-    assert opts[:challenge_scopes] == scopes
-
-    configured = Authenticate.call(request, opts)
+    configured = Factory.authenticate(request, config, resource_path: "/mcp", challenge_scopes: ["tools.call"])
     assert configured.status == 401
-    assert [configured_challenge] = get_resp_header(configured, "www-authenticate")
-
-    reference = OAuthError.missing_credentials(request, challenge_scopes: scopes)
-    assert [reference_challenge] = get_resp_header(reference, "www-authenticate")
-    assert Regex.scan(~r/\bscope="[^"]*"/, configured_challenge) == Regex.scan(~r/\bscope="[^"]*"/, reference_challenge)
+    assert get_resp_header(configured, "www-authenticate") == [metadata_challenge <> ~s(, scope="tools.call")]
   end
 
   describe "Streamable HTTP Origin validation" do

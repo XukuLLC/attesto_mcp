@@ -5,6 +5,26 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.12.1] - 2026-11-19
+
+### Behavior change
+
+`AttestoMCP.Plug.ProtectResource` no longer advertises its required scopes
+in the built-in 401 challenge by default. The first header is from 2.12.0 and
+the second is from 2.12.1.
+
+```http
+WWW-Authenticate: Bearer error="invalid_token", error_description="missing or malformed Authorization header", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp", scope="mcp:tools"
+WWW-Authenticate: Bearer error="invalid_token", error_description="missing or malformed Authorization header", resource_metadata="https://mcp.example.com/.well-known/oauth-protected-resource/mcp"
+```
+
+MCP clients use the challenge's `scope` when present, which can limit them
+to the scopes required to reach the mount. When the challenge omits `scope`,
+clients fall back to all `scopes_supported` in the Protected Resource
+Metadata document. [MCP Authorization, Scope Selection Strategy](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization#scope-selection-strategy)
+
+Pass `challenge_scopes: ["mcp:tools"]` to keep the 2.12.0 header for this mount.
+
 ## [2.12.0] - 2026-11-17
 
 ### Breaking
@@ -30,7 +50,9 @@ fixes may tighten validation or derived defaults in a minor release.
 - `AttestoMCP.Plug.Authenticate` and `AttestoMCP.Plug.ProtectResource` accept
   `:challenge_scopes` for built-in 401 challenges (RFC 6750 §3).
   `AttestoMCP.Plug.ProtectResource` defaults to its required scopes. An
-  explicit `:challenge_scopes` replaces that default.
+  explicit `:challenge_scopes` replaces that default. Not flagged at release:
+  the `ProtectResource` default changed what clients request at authorization.
+  2.12.1 removes that default.
 
 ## [2.11.1] - 2026-11-17
 
