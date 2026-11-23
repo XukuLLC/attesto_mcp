@@ -5,6 +5,12 @@ All notable changes to this project are documented here. The format is based on
 remain compatible within 2.x where security permits; security and correctness
 fixes may tighten validation or derived defaults in a minor release.
 
+## [2.12.2] - 2026-11-22
+
+### Security
+
+- Requires `phoenix ~> 1.7.25 or >= 1.8.17 and < 2.0.0` when the optional Phoenix integration is used (was `~> 1.7.24 or >= 1.8.9`). Phoenix before 1.7.25 and 1.8.17 crashes shared broadcast dispatch when a client selects the V1 serializer and sends a binary payload (CVE-2026-129344, GHSA-5vmc-qgf8-rw36), and crashes the Presence tracker on an unsanitized presence key (CVE-2026-128361, GHSA-pvfx-rx4x-phrr). AttestoMCP uses neither Channels nor Presence; the floor moves hosts that do onto the fixed releases.
+
 ## [2.12.1] - 2026-11-19
 
 ### Behavior change

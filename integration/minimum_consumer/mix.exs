@@ -18,7 +18,7 @@ defmodule AttestoMCP.MinimumConsumer.MixProject do
       {:attesto, "== 2.29.0"},
       {:jose, "== 1.11.13", override: true},
       {:plug, "== 1.20.4", override: true},
-      {:phoenix, "== 1.7.24", override: true}
+      {:phoenix, "== 1.7.25", override: true}
     ]
   end
 end

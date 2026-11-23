@@ -11,7 +11,7 @@ defmodule AttestoMCP.MixProject do
   alias AttestoMCP.Test.DPoPAssertions
   alias AttestoMCP.Test.DPoPReplay
 
-  @version "2.12.1"
+  @version "2.12.2"
   @url "https://github.com/XukuLLC/attesto_mcp"
   @maintainers ["Neil Berkman"]
 
@@ -55,7 +55,7 @@ defmodule AttestoMCP.MixProject do
       # Optional: only needed by AttestoMCP.Router and AttestoMCP.MetadataController.
       # Plug-only consumers (and the Authenticate/RequireScopes/ProtectResource
       # plugs) do not require it. Phoenix apps already depend on it directly.
-      {:phoenix, "~> 1.7.24 or >= 1.8.9 and < 2.0.0", optional: true},
+      {:phoenix, "~> 1.7.25 or >= 1.8.17 and < 2.0.0", optional: true},
 
       # Optional: only needed by the `mix attesto_mcp.install` Igniter task.
       # Library consumers never call the installer at runtime, so the dependency

@@ -9,9 +9,9 @@ defmodule AttestoMCP.DependencyRequirementsTest do
     refute_matches(requirement, ~w(1.16.6 1.17.4 1.18.5 1.19.5 1.20.3 2.0.0))
   end
 
-  test "optional integrations retain their tested floors and next-major caps" do
-    assert_matches(requirement!(:phoenix), ~w(1.7.24 1.8.9 1.99.0))
-    refute_matches(requirement!(:phoenix), ~w(1.7.23 1.8.8 2.0.0))
+  test "optional integrations admit their patched or tested floors and reject the next major" do
+    assert_matches(requirement!(:phoenix), ~w(1.7.25 1.8.17 1.99.0))
+    refute_matches(requirement!(:phoenix), ~w(1.7.24 1.8.16 2.0.0))
 
     assert_matches(requirement!(:igniter), ~w(0.6.0 0.99.0))
     refute_matches(requirement!(:igniter), ~w(0.5.99 1.0.0))
